@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Backend (FastAPI)",
+      "runtimeExecutable": "C:\\Users\\etri\\anaconda3\\python.exe",
+      "runtimeArgs": ["start_backend.py"],
+      "port": 8000
+    },
+    {
+      "name": "Frontend (Vite)",
+      "runtimeExecutable": "C:\\Users\\etri\\anaconda3\\node.exe",
+      "runtimeArgs": ["frontend\\node_modules\\vite\\bin\\vite.js", "frontend", "--port", "5173", "--config", "frontend\\vite.config.js"],
+      "port": 5173
+    }
+  ]
+}

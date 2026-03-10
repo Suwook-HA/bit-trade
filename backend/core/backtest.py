@@ -1,0 +1,164 @@
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+from typing import Optional
+
+import pyupbit
+from core.strategies import get_signal
+
+
+def download_history(market: str, interval: str, days: int = 30) -> pd.DataFrame:
+    """Upbit에서 과거 데이터 다운로드 (배치 방식)"""
+    interval_map = {
+        "1m": ("minute1", 1),
+        "3m": ("minute3", 3),
+        "5m": ("minute5", 5),
+        "15m": ("minute15", 15),
+        "1h": ("minute60", 60),
+        "1d": ("day", 1440),
+    }
+
+    upbit_interval, mins = interval_map.get(interval, ("minute1", 1))
+    candles_needed = int(days * 24 * 60 / mins)
+
+    all_df = []
+    to_date = None
+    batch_size = 200
+
+    batches_needed = (candles_needed + batch_size - 1) // batch_size
+
+    for _ in range(min(batches_needed, 50)):  # max 50 batches = 10000 candles
+        try:
+            if upbit_interval == "day":
+                df = pyupbit.get_ohlcv(market, interval="day", count=batch_size, to=to_date)
+            else:
+                df = pyupbit.get_ohlcv(market, interval=upbit_interval, count=batch_size, to=to_date)
+
+            if df is None or df.empty:
+                break
+
+            all_df.append(df)
+            to_date = df.index[0].strftime("%Y-%m-%d %H:%M:%S")
+
+        except Exception:
+            break
+
+    if not all_df:
+        return pd.DataFrame()
+
+    combined = pd.concat(all_df).sort_index()
+    combined = combined[~combined.index.duplicated(keep="first")]
+    return combined
+
+
+def run_backtest(
+    market: str,
+    interval: str,
+    strategy: str,
+    params: dict,
+    days: int = 30,
+    initial_budget: float = 10000000,
+    order_ratio: float = 0.5,
+    stop_loss: float = 0.03,
+    take_profit: float = 0.05,
+) -> dict:
+    df = download_history(market, interval, days)
+
+    if df.empty or len(df) < 50:
+        return {"error": "Not enough historical data"}
+
+    krw = initial_budget
+    btc = 0.0
+    position = "none"
+    entry_price = 0.0
+    trades = []
+    equity_curve = []
+    window = 60  # 지표 계산에 필요한 최소 캔들 수
+
+    for i in range(window, len(df)):
+        window_df = df.iloc[:i + 1]
+        price = float(df["close"].iloc[i])
+        ts = int(df.index[i].timestamp())
+
+        signal = get_signal(strategy, window_df, params)
+
+        # Stop-loss / take-profit
+        action = signal.action
+        if position == "long" and entry_price > 0:
+            change = (price - entry_price) / entry_price
+            if change <= -stop_loss:
+                action = "sell"
+            elif change >= take_profit:
+                action = "sell"
+
+        if action == "buy" and position == "none":
+            invest = krw * order_ratio
+            if invest >= 5000:
+                btc = invest / price
+                krw -= invest
+                entry_price = price
+                position = "long"
+                trades.append({
+                    "time": ts,
+                    "side": "buy",
+                    "price": price,
+                    "volume": btc,
+                })
+
+        elif action == "sell" and position == "long":
+            krw_return = btc * price
+            pnl = krw_return - (btc * entry_price)
+            krw += krw_return
+            trades.append({
+                "time": ts,
+                "side": "sell",
+                "price": price,
+                "volume": btc,
+                "pnl": round(pnl, 0),
+                "pnl_pct": round((price - entry_price) / entry_price * 100, 2),
+            })
+            btc = 0.0
+            position = "none"
+            entry_price = 0.0
+
+        # Equity value at this point
+        total_value = krw + btc * price
+        equity_curve.append({"time": ts, "value": round(total_value, 0)})
+
+    # Final equity
+    final_price = float(df["close"].iloc[-1])
+    final_value = krw + btc * final_price
+
+    # Metrics
+    total_return = (final_value - initial_budget) / initial_budget * 100
+    sell_trades = [t for t in trades if t["side"] == "sell"]
+    winning = [t for t in sell_trades if t.get("pnl", 0) > 0]
+    win_rate = len(winning) / len(sell_trades) * 100 if sell_trades else 0
+
+    # MDD
+    equity_values = np.array([e["value"] for e in equity_curve])
+    running_max = np.maximum.accumulate(equity_values)
+    drawdowns = (equity_values - running_max) / running_max
+    mdd = float(drawdowns.min() * 100) if len(drawdowns) > 0 else 0
+
+    # Sharpe (simplified, daily returns)
+    if len(equity_values) > 1:
+        returns = np.diff(equity_values) / equity_values[:-1]
+        sharpe = float(returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+    else:
+        sharpe = 0
+
+    return {
+        "summary": {
+            "initial_budget": initial_budget,
+            "final_value": round(final_value, 0),
+            "total_return_pct": round(total_return, 2),
+            "total_trades": len(sell_trades),
+            "win_rate_pct": round(win_rate, 2),
+            "mdd_pct": round(mdd, 2),
+            "sharpe_ratio": round(sharpe, 3),
+            "data_points": len(df),
+        },
+        "trades": trades[-100:],  # 최근 100건
+        "equity_curve": equity_curve[::max(1, len(equity_curve) // 500)],  # 최대 500포인트
+    }
