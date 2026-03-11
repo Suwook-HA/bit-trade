@@ -18,142 +18,147 @@
   ::-webkit-scrollbar-thumb:hover { background: #52525b; }
 }
 
-@layer components {
-  .card {
-    background-color: #18181b;
-    border: 1px solid #27272a;
-    border-radius: 0.75rem;
-  }
+/* Component classes — plain CSS (no @layer) so Tailwind cannot purge them */
+.card {
+  background-color: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 0.75rem;
+}
 
-  .card-header {
-    padding: 0.875rem 1rem;
-    border-bottom: 1px solid #27272a;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #a1a1aa;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
+.card-header {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid #27272a;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #a1a1aa;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
 
-  .input-field {
-    background-color: #27272a;
-    border: 1px solid #3f3f46;
-    border-radius: 0.375rem;
-    padding: 0.375rem 0.625rem;
-    font-size: 0.8125rem;
-    color: #fafafa;
-    width: 100%;
-    outline: none;
-    transition: border-color 0.15s;
-  }
-  .input-field:focus { border-color: #3b82f6; }
+.input-field {
+  background-color: #27272a;
+  border: 1px solid #3f3f46;
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  color: #fafafa;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.input-field:focus { border-color: #3b82f6; }
 
-  .select-field {
-    background-color: #27272a;
-    border: 1px solid #3f3f46;
-    border-radius: 0.375rem;
-    padding: 0.375rem 0.625rem;
-    font-size: 0.8125rem;
-    color: #fafafa;
-    width: 100%;
-    outline: none;
-    cursor: pointer;
-  }
+.select-field {
+  background-color: #27272a;
+  border: 1px solid #3f3f46;
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.625rem;
+  font-size: 0.8125rem;
+  color: #fafafa;
+  width: 100%;
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.select-field option {
+  background-color: #27272a;
+  color: #fafafa;
+}
 
-  .btn-primary {
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
-    color: white;
-    border: none;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s, transform 0.1s;
-    width: 100%;
-  }
-  .btn-primary:hover { opacity: 0.9; }
-  .btn-primary:active { transform: scale(0.98); }
-  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+  width: 100%;
+}
+.btn-primary:hover { opacity: 0.9; }
+.btn-primary:active { transform: scale(0.98); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .btn-danger {
-    background: linear-gradient(135deg, #ef4444, #dc2626);
-    color: white;
-    border: none;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s;
-    width: 100%;
-  }
-  .btn-danger:hover { opacity: 0.9; }
+.btn-danger {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  width: 100%;
+}
+.btn-danger:hover { opacity: 0.9; }
 
-  .btn-violet {
-    background: linear-gradient(135deg, #8b5cf6, #7c3aed);
-    color: white;
-    border: none;
-    border-radius: 0.5rem;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.15s;
-    width: 100%;
-  }
-  .btn-violet:hover { opacity: 0.9; }
-  .btn-violet:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-violet {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  width: 100%;
+}
+.btn-violet:hover { opacity: 0.9; }
+.btn-violet:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .tag-buy {
-    background-color: rgba(16, 185, 129, 0.15);
-    color: #34d399;
-    border: 1px solid rgba(16, 185, 129, 0.3);
-    border-radius: 0.25rem;
-    padding: 0.125rem 0.5rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
-  }
+.tag-buy {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
 
-  .tag-sell {
-    background-color: rgba(239, 68, 68, 0.15);
-    color: #f87171;
-    border: 1px solid rgba(239, 68, 68, 0.3);
-    border-radius: 0.25rem;
-    padding: 0.125rem 0.5rem;
-    font-size: 0.6875rem;
-    font-weight: 600;
-  }
+.tag-sell {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
 
-  .pill-active {
-    background-color: #3b82f6;
-    color: white;
-    border-radius: 0.375rem;
-    padding: 0.25rem 0.75rem;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    transition: background-color 0.15s;
-  }
+.pill-active {
+  background-color: #3b82f6;
+  color: white;
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
 
-  .pill-inactive {
-    background-color: transparent;
-    color: #71717a;
-    border-radius: 0.375rem;
-    padding: 0.25rem 0.75rem;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  .pill-inactive:hover { color: #a1a1aa; background-color: #27272a; }
+.pill-inactive {
+  background-color: transparent;
+  color: #71717a;
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.pill-inactive:hover { color: #a1a1aa; background-color: #27272a; }
 
-  .stat-card {
-    background-color: #27272a;
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    text-align: center;
-  }
+.stat-card {
+  background-color: #27272a;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  text-align: center;
 }
