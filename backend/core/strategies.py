@@ -68,6 +68,15 @@ def compute_macd_signal(
     return Signal("hold", f"MACD {macd_val:.2f} / Signal {sig_val:.2f}", price, indicators)
 
 
+def _bbands(close: pd.Series, length: int = 20, std_dev: float = 2.0):
+    """numba 없이 pandas rolling으로 볼린저밴드 계산"""
+    mid = close.rolling(length).mean()
+    std = close.rolling(length).std(ddof=0)
+    upper = mid + std_dev * std
+    lower = mid - std_dev * std
+    return upper, mid, lower
+
+
 def compute_bollinger_signal(
     df: pd.DataFrame,
     period: int = 20,
@@ -77,21 +86,16 @@ def compute_bollinger_signal(
         return Signal("hold", "Not enough data", df["close"].iloc[-1], {})
 
     df = df.copy()
-    bb = ta.bbands(df["close"], length=period, std=std_dev)
-    if bb is None or bb.empty:
-        return Signal("hold", "BB not computed", df["close"].iloc[-1], {})
+    upper, mid, lower = _bbands(df["close"], length=period, std_dev=std_dev)
 
-    upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
-    lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
-    mid_col   = next((c for c in bb.columns if c.startswith("BBM_")), None)
-
-    if not upper_col or not lower_col or not mid_col:
-        return Signal("hold", "BB columns not found", df["close"].iloc[-1], {})
-
-    upper = bb[upper_col].iloc[-1]
-    lower = bb[lower_col].iloc[-1]
-    mid = bb[mid_col].iloc[-1]
+    upper_val = upper.iloc[-1]
+    lower_val = lower.iloc[-1]
+    mid_val   = mid.iloc[-1]
     price = df["close"].iloc[-1]
+
+    upper = upper_val
+    lower = lower_val
+    mid   = mid_val
 
     if pd.isna(upper) or pd.isna(lower):
         return Signal("hold", "BB not computed", price, {})
@@ -177,27 +181,22 @@ def compute_indicators_for_chart(df: pd.DataFrame) -> dict:
             ]
 
     # Bollinger Bands
-    bb = ta.bbands(df["close"], length=20, std=2.0)
-    if bb is not None and not bb.empty:
-        bbu = next((c for c in bb.columns if c.startswith("BBU_")), None)
-        bbl = next((c for c in bb.columns if c.startswith("BBL_")), None)
-        bbm = next((c for c in bb.columns if c.startswith("BBM_")), None)
-        if bbu and bbl and bbm:
-            result["bb_upper"] = [
-                {"time": int(ts.timestamp()), "value": float(v)}
-                for ts, v in zip(df.index, bb[bbu])
-                if not pd.isna(v)
-            ]
-            result["bb_lower"] = [
-                {"time": int(ts.timestamp()), "value": float(v)}
-                for ts, v in zip(df.index, bb[bbl])
-                if not pd.isna(v)
-            ]
-            result["bb_mid"] = [
-                {"time": int(ts.timestamp()), "value": float(v)}
-                for ts, v in zip(df.index, bb[bbm])
-                if not pd.isna(v)
-            ]
+    bb_upper, bb_mid, bb_lower = _bbands(df["close"], length=20, std_dev=2.0)
+    result["bb_upper"] = [
+        {"time": int(ts.timestamp()), "value": float(v)}
+        for ts, v in zip(df.index, bb_upper)
+        if not pd.isna(v)
+    ]
+    result["bb_lower"] = [
+        {"time": int(ts.timestamp()), "value": float(v)}
+        for ts, v in zip(df.index, bb_lower)
+        if not pd.isna(v)
+    ]
+    result["bb_mid"] = [
+        {"time": int(ts.timestamp()), "value": float(v)}
+        for ts, v in zip(df.index, bb_mid)
+        if not pd.isna(v)
+    ]
 
     # RSI
     rsi = ta.rsi(df["close"], length=14)
