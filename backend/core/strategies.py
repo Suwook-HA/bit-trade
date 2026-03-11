@@ -81,9 +81,12 @@ def compute_bollinger_signal(
     if bb is None or bb.empty:
         return Signal("hold", "BB not computed", df["close"].iloc[-1], {})
 
-    upper_col = f"BBU_{period}_{std_dev}"
-    lower_col = f"BBL_{period}_{std_dev}"
-    mid_col = f"BBM_{period}_{std_dev}"
+    upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
+    lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
+    mid_col   = next((c for c in bb.columns if c.startswith("BBM_")), None)
+
+    if not upper_col or not lower_col or not mid_col:
+        return Signal("hold", "BB columns not found", df["close"].iloc[-1], {})
 
     upper = bb[upper_col].iloc[-1]
     lower = bb[lower_col].iloc[-1]
@@ -176,21 +179,25 @@ def compute_indicators_for_chart(df: pd.DataFrame) -> dict:
     # Bollinger Bands
     bb = ta.bbands(df["close"], length=20, std=2.0)
     if bb is not None and not bb.empty:
-        result["bb_upper"] = [
-            {"time": int(ts.timestamp()), "value": float(v)}
-            for ts, v in zip(df.index, bb["BBU_20_2.0"])
-            if not pd.isna(v)
-        ]
-        result["bb_lower"] = [
-            {"time": int(ts.timestamp()), "value": float(v)}
-            for ts, v in zip(df.index, bb["BBL_20_2.0"])
-            if not pd.isna(v)
-        ]
-        result["bb_mid"] = [
-            {"time": int(ts.timestamp()), "value": float(v)}
-            for ts, v in zip(df.index, bb["BBM_20_2.0"])
-            if not pd.isna(v)
-        ]
+        bbu = next((c for c in bb.columns if c.startswith("BBU_")), None)
+        bbl = next((c for c in bb.columns if c.startswith("BBL_")), None)
+        bbm = next((c for c in bb.columns if c.startswith("BBM_")), None)
+        if bbu and bbl and bbm:
+            result["bb_upper"] = [
+                {"time": int(ts.timestamp()), "value": float(v)}
+                for ts, v in zip(df.index, bb[bbu])
+                if not pd.isna(v)
+            ]
+            result["bb_lower"] = [
+                {"time": int(ts.timestamp()), "value": float(v)}
+                for ts, v in zip(df.index, bb[bbl])
+                if not pd.isna(v)
+            ]
+            result["bb_mid"] = [
+                {"time": int(ts.timestamp()), "value": float(v)}
+                for ts, v in zip(df.index, bb[bbm])
+                if not pd.isna(v)
+            ]
 
     # RSI
     rsi = ta.rsi(df["close"], length=14)
