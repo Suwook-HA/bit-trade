@@ -70,10 +70,9 @@ def get_ticker(market: str) -> dict:
         return {}
     orderbook = pyupbit.get_orderbook(market)
     result = {"market": market, "price": ticker}
-    if orderbook and len(orderbook) > 0:
-        ob = orderbook[0]
-        result["ask_price"] = ob["orderbook_units"][0]["ask_price"]
-        result["bid_price"] = ob["orderbook_units"][0]["bid_price"]
+    if orderbook and "orderbook_units" in orderbook:
+        result["ask_price"] = orderbook["orderbook_units"][0]["ask_price"]
+        result["bid_price"] = orderbook["orderbook_units"][0]["bid_price"]
     return result
 
 
