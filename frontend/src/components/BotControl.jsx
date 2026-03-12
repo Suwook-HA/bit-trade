@@ -182,6 +182,7 @@ export default function BotControl() {
   const [stopLoss, setStopLoss] = useState(3)
   const [takeProfit, setTakeProfit] = useState(5)
   const [autoRebalance, setAutoRebalance] = useState(false)
+  const [autoStrategy, setAutoStrategy] = useState(false)
   const [execInterval, setExecInterval] = useState(0)
   const [budget, setBudget] = useState(1000000)
   const [trailingStop, setTrailingStop] = useState(false)
@@ -214,6 +215,7 @@ export default function BotControl() {
         execution_interval_seconds: execInterval,
         trailing_stop: trailingStop,
         trailing_stop_pct: trailingStopPct / 100,
+        auto_strategy: autoStrategy,
       })
     } catch (e) { alert('봇 시작 실패: ' + e.message) }
     setLoading(false)
@@ -263,25 +265,48 @@ export default function BotControl() {
           <RunningStatus status={status} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div>
-              <label style={label}>전략</label>
-              <select className="select-field" value={strategy} onChange={e => setStrategy(e.target.value)}>
-                {STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </select>
-            </div>
-
-            <div>
-              <label style={label}>전략 파라미터</label>
-              <div style={row2}>
-                {Object.entries(params).map(([key, val]) => (
-                  <div key={key}>
-                    <label style={{ ...label, color: '#52525b' }}>{key}</label>
-                    <input type="number" value={val} onChange={e => updateParam(key, e.target.value)}
-                      className="input-field" step={key.includes('std') ? 0.1 : 1} />
-                  </div>
-                ))}
+            {/* 자동 전략 선택 */}
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: '8px',
+              padding: '10px 12px', borderRadius: '8px',
+              background: autoStrategy ? 'rgba(167,139,250,0.08)' : '#18181b',
+              border: `1px solid ${autoStrategy ? 'rgba(167,139,250,0.4)' : '#27272a'}`,
+            }}>
+              <input type="checkbox" id="autoStrategy" checked={autoStrategy}
+                onChange={e => setAutoStrategy(e.target.checked)}
+                style={{ accentColor: '#a78bfa', width: '14px', height: '14px', marginTop: '2px', flexShrink: 0 }} />
+              <div>
+                <label htmlFor="autoStrategy" style={{ ...label, marginBottom: '2px', color: '#a78bfa', cursor: 'pointer', fontWeight: 700 }}>
+                  자동 전략 선택
+                </label>
+                <div style={{ fontSize: '10px', color: '#52525b', lineHeight: 1.5 }}>
+                  봇 시작 시 백테스트(54개 조합)로 최적 전략과 파라미터를 자동 선택합니다.<br />
+                  OFF이면 아래에서 직접 선택하세요.
+                </div>
               </div>
             </div>
+
+            {!autoStrategy && (<>
+              <div>
+                <label style={label}>전략</label>
+                <select className="select-field" value={strategy} onChange={e => setStrategy(e.target.value)}>
+                  {STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={label}>전략 파라미터</label>
+                <div style={row2}>
+                  {Object.entries(params).map(([key, val]) => (
+                    <div key={key}>
+                      <label style={{ ...label, color: '#52525b' }}>{key}</label>
+                      <input type="number" value={val} onChange={e => updateParam(key, e.target.value)}
+                        className="input-field" step={key.includes('std') ? 0.1 : 1} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>)}
 
             <div style={divider} />
 
@@ -453,7 +478,9 @@ export default function BotControl() {
           </button>
         ) : (
           <button className="btn-primary" onClick={handleStart} disabled={loading}>
-            {mode === 'paper' ? '▶ 모의투자 시작' : '⚡ 실거래 시작'}
+            {loading
+        ? (autoStrategy ? '⏳ 전략 분석 중...' : '시작 중...')
+        : mode === 'paper' ? '▶ 모의투자 시작' : '⚡ 실거래 시작'}
           </button>
         )}
       </div>

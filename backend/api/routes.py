@@ -52,11 +52,28 @@ class BotStartRequest(BaseModel):
     slippage_rate: float = 0.0002
     trailing_stop: bool = False
     trailing_stop_pct: float = 0.02
+    auto_strategy: bool = False
 
 
 @router.post("/bot/start")
 async def bot_start(req: BotStartRequest):
-    return await start_bot(req.model_dump())
+    config = req.model_dump()
+    if req.auto_strategy:
+        from core.recommender import run_grid_search
+        rec = await run_grid_search(
+            market=req.market,
+            interval=req.interval,
+            days=7,
+            top_n=1,
+            order_ratio=req.order_ratio,
+            stop_loss=req.stop_loss,
+            take_profit=req.take_profit,
+        )
+        if rec and not rec.get("error") and rec.get("recommendations"):
+            best = rec["recommendations"][0]
+            config["strategy"] = best["strategy"]
+            config["params"] = best["params"]
+    return await start_bot(config)
 
 
 @router.post("/bot/stop")
@@ -148,6 +165,28 @@ async def portfolio():
              "created_at": r[4], "strategy": r[5], "mode": r[6]}
             for r in rows
         ]
-        return {"paper_portfolio": paper, "recent_trades": trades}
+
+        # P&L 집계 (전체 매도 거래 기준)
+        cursor3 = await db.execute(
+            "SELECT pnl FROM trades WHERE side='sell' AND pnl IS NOT NULL"
+        )
+        pnl_rows = await cursor3.fetchall()
+        pnl_values = [r[0] for r in pnl_rows if r[0] is not None]
+        total_pnl = sum(pnl_values)
+        win_count = sum(1 for p in pnl_values if p > 0)
+        loss_count = sum(1 for p in pnl_values if p < 0)
+        best_trade = max(pnl_values) if pnl_values else 0
+        worst_trade = min(pnl_values) if pnl_values else 0
+        pnl_summary = {
+            "total_pnl": round(total_pnl),
+            "trade_count": len(pnl_values),
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "win_rate_pct": round(win_count / len(pnl_values) * 100, 1) if pnl_values else 0,
+            "best_trade": round(best_trade),
+            "worst_trade": round(worst_trade),
+        }
+
+        return {"paper_portfolio": paper, "recent_trades": trades, "pnl_summary": pnl_summary}
     finally:
         await db.close()
