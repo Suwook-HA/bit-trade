@@ -45,6 +45,8 @@ export default function Backtest() {
   const [days, setDays] = useState(7)
   const [stopLoss, setStopLoss] = useState(3)
   const [takeProfit, setTakeProfit] = useState(5)
+  const [trailingStop, setTrailingStop] = useState(false)
+  const [trailingStopPct, setTrailingStopPct] = useState(2)
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -58,6 +60,7 @@ export default function Backtest() {
       const r = await runBacktest({
         market: 'KRW-BTC', interval, strategy, params, days,
         initial_budget: 10000000, stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
+        trailing_stop: trailingStop, trailing_stop_pct: trailingStopPct / 100,
       })
       if (r.error) setError(r.error)
       else setResult(r)
@@ -127,6 +130,25 @@ export default function Backtest() {
             </div>
           </div>
 
+          {/* 추적손절 옵션 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input type="checkbox" id="btTrailing" checked={trailingStop}
+                onChange={e => setTrailingStop(e.target.checked)}
+                style={{ accentColor: '#fb923c', width: '13px', height: '13px' }} />
+              <label htmlFor="btTrailing" style={{ ...label, marginBottom: 0, color: '#fb923c', cursor: 'pointer' }}>추적손절</label>
+              <input type="number" value={trailingStopPct}
+                onChange={e => setTrailingStopPct(Math.max(0.1, Number(e.target.value)))}
+                disabled={!trailingStop} min={0.1} max={10} step={0.1}
+                style={{ width: '48px', padding: '2px 5px', borderRadius: '4px',
+                  border: `1px solid ${trailingStop ? '#fb923c' : '#3f3f46'}`,
+                  background: '#18181b', color: trailingStop ? '#fb923c' : '#52525b', fontSize: '11px' }} />
+              <span style={{ fontSize: '11px', color: '#52525b' }}>%</span>
+            </div>
+            <span style={{ fontSize: '10px', color: '#3f3f46' }}>|</span>
+            <span style={{ fontSize: '10px', color: '#52525b' }}>수수료 0.05% · 슬리피지 0.02% 자동 반영</span>
+          </div>
+
           {error && (
             <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', padding: '8px 12px', fontSize: '12px', color: '#f87171' }}>
               {error}
@@ -151,7 +173,8 @@ export default function Backtest() {
               color={summary.win_rate_pct >= 50 ? '#34d399' : '#f87171'} />
             <MetricCard lbl="MDD" value={`${summary.mdd_pct}%`} color="#f87171" accent="#f87171" />
             <MetricCard lbl="Sharpe" value={summary.sharpe_ratio}
-              color={summary.sharpe_ratio >= 1 ? '#34d399' : summary.sharpe_ratio >= 0 ? '#fbbf24' : '#f87171'} />
+              color={summary.sharpe_ratio >= 1 ? '#34d399' : summary.sharpe_ratio >= 0 ? '#fbbf24' : '#f87171'}
+              sub={`수수료 ${summary.fee_rate_pct ?? 0.05}% · 슬리피지 ${summary.slippage_rate_pct ?? 0.02}%`} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '12px' }}>

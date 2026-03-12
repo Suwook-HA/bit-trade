@@ -48,6 +48,10 @@ class BotStartRequest(BaseModel):
     auto_rebalance: bool = False
     rebalance_interval_candles: int = 30
     execution_interval_seconds: int = 0
+    fee_rate: float = 0.0005
+    slippage_rate: float = 0.0002
+    trailing_stop: bool = False
+    trailing_stop_pct: float = 0.02
 
 
 @router.post("/bot/start")
@@ -77,6 +81,10 @@ class BacktestRequest(BaseModel):
     order_ratio: float = 0.5
     stop_loss: float = 0.03
     take_profit: float = 0.05
+    fee_rate: float = 0.0005
+    slippage_rate: float = 0.0002
+    trailing_stop: bool = False
+    trailing_stop_pct: float = 0.02
 
 
 @router.post("/backtest")
@@ -93,6 +101,10 @@ async def backtest(req: BacktestRequest):
         order_ratio=req.order_ratio,
         stop_loss=req.stop_loss,
         take_profit=req.take_profit,
+        fee_rate=req.fee_rate,
+        slippage_rate=req.slippage_rate,
+        trailing_stop=req.trailing_stop,
+        trailing_stop_pct=req.trailing_stop_pct,
     ))
     return result
 

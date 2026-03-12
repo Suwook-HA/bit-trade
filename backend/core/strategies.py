@@ -156,11 +156,26 @@ STRATEGY_MAP = {
 }
 
 
-def get_signal(strategy: str, df: pd.DataFrame, params: dict) -> Signal:
+def get_signal(strategy: str, df: pd.DataFrame, params: dict, volume_filter: bool = True) -> Signal:
     func = STRATEGY_MAP.get(strategy)
     if func is None:
         return Signal("hold", "Unknown strategy", df["close"].iloc[-1] if not df.empty else 0, {})
-    return func(df, **params)
+
+    signal = func(df, **params)
+
+    # 거래량 필터: 신호 발생 시 거래량이 평균의 40% 미만이면 노이즈로 간주
+    if volume_filter and signal.action != "hold" and "volume" in df.columns and len(df) >= 20:
+        vol_cur = float(df["volume"].iloc[-1])
+        vol_avg = float(df["volume"].rolling(20).mean().iloc[-1])
+        if not pd.isna(vol_avg) and vol_avg > 0 and vol_cur < vol_avg * 0.4:
+            return Signal(
+                "hold",
+                f"Low volume filtered ({vol_cur:.0f} < {vol_avg * 0.4:.0f})",
+                signal.price,
+                signal.indicator_values,
+            )
+
+    return signal
 
 
 def compute_indicators_for_chart(df: pd.DataFrame) -> dict:

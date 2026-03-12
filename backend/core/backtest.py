@@ -59,6 +59,11 @@ def run_backtest_on_df(
     order_ratio: float = 0.5,
     stop_loss: float = 0.03,
     take_profit: float = 0.05,
+    fee_rate: float = 0.0005,        # 업비트 수수료 0.05%
+    slippage_rate: float = 0.0002,   # 슬리피지 0.02%
+    trailing_stop: bool = False,
+    trailing_stop_pct: float = 0.02,
+    volume_filter: bool = True,
 ) -> dict:
     """사전 다운로드된 DataFrame으로 백테스트 실행 (그리드 서치용)"""
     if df.empty or len(df) < 50:
@@ -68,6 +73,7 @@ def run_backtest_on_df(
     btc = 0.0
     position = "none"
     entry_price = 0.0
+    peak_price = 0.0
     trades = []
     equity_curve = []
     window = 60
@@ -78,39 +84,59 @@ def run_backtest_on_df(
         ts = int(df.index[i].timestamp())
 
         try:
-            signal = get_signal(strategy, window_df, params)
+            signal = get_signal(strategy, window_df, params, volume_filter=volume_filter)
         except Exception:
             continue
 
         action = signal.action
+
+        # 포지션 보유 중 최고가 갱신
+        if position == "long":
+            if price > peak_price:
+                peak_price = price
+
         if position == "long" and entry_price > 0:
             change = (price - entry_price) / entry_price
             if change <= -stop_loss:
                 action = "sell"
             elif change >= take_profit:
                 action = "sell"
+            # 추적손절
+            elif trailing_stop and peak_price > 0:
+                drop = (price - peak_price) / peak_price
+                if drop <= -trailing_stop_pct:
+                    action = "sell"
 
         if action == "buy" and position == "none":
             invest = krw * order_ratio
             if invest >= 5000:
-                btc = invest / price
+                # 슬리피지 반영 매수 체결가
+                buy_price = price * (1 + slippage_rate)
+                fee = invest * fee_rate
+                btc = (invest - fee) / buy_price
                 krw -= invest
-                entry_price = price
+                entry_price = buy_price
+                peak_price = buy_price
                 position = "long"
-                trades.append({"time": ts, "side": "buy", "price": price, "volume": btc})
+                trades.append({"time": ts, "side": "buy", "price": round(buy_price, 0), "volume": btc})
 
         elif action == "sell" and position == "long":
-            krw_return = btc * price
+            # 슬리피지 반영 매도 체결가
+            sell_price = price * (1 - slippage_rate)
+            krw_return = btc * sell_price
+            fee = krw_return * fee_rate
+            krw_return -= fee
             pnl = krw_return - (btc * entry_price)
             krw += krw_return
             trades.append({
-                "time": ts, "side": "sell", "price": price, "volume": btc,
+                "time": ts, "side": "sell", "price": round(sell_price, 0), "volume": btc,
                 "pnl": round(pnl, 0),
-                "pnl_pct": round((price - entry_price) / entry_price * 100, 2),
+                "pnl_pct": round((sell_price - entry_price) / entry_price * 100, 2),
             })
             btc = 0.0
             position = "none"
             entry_price = 0.0
+            peak_price = 0.0
 
         total_value = krw + btc * price
         equity_curve.append({"time": ts, "value": round(total_value, 0)})
@@ -147,6 +173,8 @@ def run_backtest_on_df(
             "mdd_pct": round(mdd, 2),
             "sharpe_ratio": round(sharpe, 3),
             "data_points": len(df),
+        "fee_rate_pct": round(fee_rate * 100, 3),
+        "slippage_rate_pct": round(slippage_rate * 100, 3),
         },
         "trades": trades[-100:],
         "equity_curve": equity_curve[::max(1, len(equity_curve) // 500)],
@@ -163,8 +191,16 @@ def run_backtest(
     order_ratio: float = 0.5,
     stop_loss: float = 0.03,
     take_profit: float = 0.05,
+    fee_rate: float = 0.0005,
+    slippage_rate: float = 0.0002,
+    trailing_stop: bool = False,
+    trailing_stop_pct: float = 0.02,
 ) -> dict:
     df = download_history(market, interval, days)
     if df.empty or len(df) < 50:
         return {"error": "Not enough historical data"}
-    return run_backtest_on_df(df, strategy, params, initial_budget, order_ratio, stop_loss, take_profit)
+    return run_backtest_on_df(
+        df, strategy, params, initial_budget, order_ratio,
+        stop_loss, take_profit, fee_rate, slippage_rate,
+        trailing_stop, trailing_stop_pct,
+    )

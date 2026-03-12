@@ -24,6 +24,10 @@ class BotConfig:
     rebalance_interval_candles: int = 30
     rebalance_threshold: float = 0.20
     execution_interval_seconds: int = 0  # 0 = 캔들 타임프레임과 동일
+    fee_rate: float = 0.0005             # 업비트 수수료 0.05%
+    slippage_rate: float = 0.0002        # 슬리피지 0.02%
+    trailing_stop: bool = False
+    trailing_stop_pct: float = 0.02
 
 
 @dataclass
@@ -42,6 +46,7 @@ class BotState:
     rebalance_count: int = 0
     last_rebalanced: str = ""
     candle_counter: int = 0
+    peak_price: float = 0.0
 
 
 # 전역 봇 상태
@@ -99,15 +104,20 @@ async def _paper_buy(config: BotConfig, price: float) -> bool:
     if invest_krw < 5000:
         return False
 
-    volume = invest_krw / price
+    # 슬리피지 + 수수료 반영
+    buy_price = price * (1 + config.slippage_rate)
+    fee = invest_krw * config.fee_rate
+    volume = (invest_krw - fee) / buy_price
+
     state.paper_krw -= invest_krw
     state.paper_btc += volume
-    state.entry_price = price
+    state.entry_price = buy_price
     state.entry_volume = volume
+    state.peak_price = buy_price
     state.position = "long"
     state.total_trades += 1
 
-    await _record_trade("paper", config.market, "buy", price, volume, config.strategy)
+    await _record_trade("paper", config.market, "buy", buy_price, volume, config.strategy)
     return True
 
 
@@ -117,15 +127,20 @@ async def _paper_sell(config: BotConfig, price: float) -> bool:
         return False
 
     volume = state.paper_btc
-    krw_return = volume * price
+    # 슬리피지 + 수수료 반영
+    sell_price = price * (1 - config.slippage_rate)
+    krw_return = volume * sell_price
+    fee = krw_return * config.fee_rate
+    krw_return -= fee
     pnl = krw_return - (state.entry_volume * state.entry_price)
 
     state.paper_krw += krw_return
     state.paper_btc = 0
+    state.peak_price = 0.0
     state.total_pnl += pnl
     state.position = "none"
 
-    await _record_trade("paper", config.market, "sell", price, volume, config.strategy, pnl)
+    await _record_trade("paper", config.market, "sell", sell_price, volume, config.strategy, pnl)
     return True
 
 
@@ -274,7 +289,11 @@ async def _bot_loop(config: BotConfig):
 
             price = signal.price
 
-            # Check stop-loss / take-profit first
+            # 최고가 갱신 (추적손절용)
+            if state.position == "long" and price > state.peak_price:
+                state.peak_price = price
+
+            # 손절 / 익절 / 추적손절 체크
             if state.position == "long" and state.entry_price > 0:
                 change = (price - state.entry_price) / state.entry_price
                 if change <= -config.stop_loss:
@@ -283,6 +302,13 @@ async def _bot_loop(config: BotConfig):
                 elif change >= config.take_profit:
                     signal_action = "sell"
                     state.last_signal_reason = f"Take-profit triggered ({change*100:.1f}%)"
+                elif config.trailing_stop and state.peak_price > 0:
+                    drop = (price - state.peak_price) / state.peak_price
+                    if drop <= -config.trailing_stop_pct:
+                        signal_action = "sell"
+                        state.last_signal_reason = f"Trailing stop triggered ({drop*100:.1f}% from peak ₩{state.peak_price:,.0f})"
+                    else:
+                        signal_action = signal.action
                 else:
                     signal_action = signal.action
             else:

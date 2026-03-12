@@ -184,6 +184,8 @@ export default function BotControl() {
   const [autoRebalance, setAutoRebalance] = useState(false)
   const [execInterval, setExecInterval] = useState(0)
   const [budget, setBudget] = useState(1000000)
+  const [trailingStop, setTrailingStop] = useState(false)
+  const [trailingStopPct, setTrailingStopPct] = useState(2)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [recommendations, setRecommendations] = useState(null)
@@ -210,6 +212,8 @@ export default function BotControl() {
         auto_rebalance: autoRebalance,
         rebalance_interval_candles: 30,
         execution_interval_seconds: execInterval,
+        trailing_stop: trailingStop,
+        trailing_stop_pct: trailingStopPct / 100,
       })
     } catch (e) { alert('봇 시작 실패: ' + e.message) }
     setLoading(false)
@@ -387,6 +391,30 @@ export default function BotControl() {
               <label htmlFor="autoRebalance" style={{ ...label, marginBottom: 0, color: '#a78bfa', cursor: 'pointer' }}>
                 자동 재조정 (30캔들마다 전략 재평가)
               </label>
+            </div>
+
+            {/* 추적손절 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input type="checkbox" id="trailingStop" checked={trailingStop}
+                onChange={e => setTrailingStop(e.target.checked)}
+                style={{ accentColor: '#fb923c', width: '14px', height: '14px' }} />
+              <label htmlFor="trailingStop" style={{ ...label, marginBottom: 0, color: '#fb923c', cursor: 'pointer' }}>
+                추적손절 (고점 대비
+              </label>
+              <input
+                type="number"
+                value={trailingStopPct}
+                onChange={e => setTrailingStopPct(Math.max(0.1, Number(e.target.value)))}
+                disabled={!trailingStop}
+                min={0.1} max={10} step={0.1}
+                style={{
+                  width: '52px', padding: '2px 6px', borderRadius: '4px',
+                  border: `1px solid ${trailingStop ? '#fb923c' : '#3f3f46'}`,
+                  background: '#18181b', color: trailingStop ? '#fb923c' : '#52525b',
+                  fontSize: '12px', textAlign: 'center',
+                }}
+              />
+              <span style={{ ...label, marginBottom: 0, color: trailingStop ? '#fb923c' : '#52525b' }}>% 하락 시 청산)</span>
             </div>
 
             <div style={divider} />

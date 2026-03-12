@@ -1,6 +1,6 @@
 """
 전략 자동 추천 & 그리드 서치 엔진
-- 35개 전략×파라미터 조합 병렬 백테스트
+- 단타 최적화 파라미터 포함 54개 전략×파라미터 조합 병렬 백테스트
 - 실시간 지표 기반 시장 상태 분석
 - 5분 캐시
 """
@@ -13,20 +13,30 @@ from concurrent.futures import ThreadPoolExecutor
 
 from core.backtest import download_history, run_backtest_on_df
 
-# ─── 파라미터 그리드 ───────────────────────────────────────────
+# ─── 파라미터 그리드 (단타 최적화 포함) ──────────────────────────
 PARAM_GRID: list[tuple[str, dict]] = []
 
-for _period, _oversold, _overbought in itertools.product([10, 14, 21], [25, 30], [65, 70]):
+# RSI: 단기(7,9) + 표준(10,14) 조합
+for _period, _oversold, _overbought in itertools.product([7, 9, 10, 14], [25, 30], [65, 70]):
     PARAM_GRID.append(("rsi", {"period": _period, "oversold": _oversold, "overbought": _overbought}))
 
-for _fast, _slow, _sig in itertools.product([8, 12], [21, 26], [7, 9]):
-    if _fast < _slow:
-        PARAM_GRID.append(("macd", {"fast": _fast, "slow": _slow, "signal": _sig}))
+# MACD: 단기(5/13/5) + 표준(8/21, 12/26)
+_macd_combos = [
+    (5, 13, 5),   # 단타 최적화
+    (8, 21, 7),
+    (8, 21, 9),
+    (12, 26, 7),
+    (12, 26, 9),
+]
+for _fast, _slow, _sig in _macd_combos:
+    PARAM_GRID.append(("macd", {"fast": _fast, "slow": _slow, "signal": _sig}))
 
-for _period, _std in itertools.product([15, 20], [1.5, 2.0, 2.5]):
+# 볼린저밴드: 단기(10) + 표준(15, 20)
+for _period, _std in itertools.product([10, 15, 20], [1.5, 2.0, 2.5]):
     PARAM_GRID.append(("bollinger", {"period": _period, "std_dev": _std}))
 
-for _short, _long in itertools.product([3, 5, 7], [15, 20, 30]):
+# MA 크로스: 단기(3/10, 5/15) + 표준
+for _short, _long in itertools.product([3, 5, 7], [10, 15, 20]):
     if _short < _long:
         PARAM_GRID.append(("ma_cross", {"short_period": _short, "long_period": _long}))
 
