@@ -51,19 +51,16 @@ def download_history(market: str, interval: str, days: int = 30) -> pd.DataFrame
     return combined
 
 
-def run_backtest(
-    market: str,
-    interval: str,
+def run_backtest_on_df(
+    df: pd.DataFrame,
     strategy: str,
     params: dict,
-    days: int = 30,
     initial_budget: float = 10000000,
     order_ratio: float = 0.5,
     stop_loss: float = 0.03,
     take_profit: float = 0.05,
 ) -> dict:
-    df = download_history(market, interval, days)
-
+    """사전 다운로드된 DataFrame으로 백테스트 실행 (그리드 서치용)"""
     if df.empty or len(df) < 50:
         return {"error": "Not enough historical data"}
 
@@ -73,16 +70,18 @@ def run_backtest(
     entry_price = 0.0
     trades = []
     equity_curve = []
-    window = 60  # 지표 계산에 필요한 최소 캔들 수
+    window = 60
 
     for i in range(window, len(df)):
         window_df = df.iloc[:i + 1]
         price = float(df["close"].iloc[i])
         ts = int(df.index[i].timestamp())
 
-        signal = get_signal(strategy, window_df, params)
+        try:
+            signal = get_signal(strategy, window_df, params)
+        except Exception:
+            continue
 
-        # Stop-loss / take-profit
         action = signal.action
         if position == "long" and entry_price > 0:
             change = (price - entry_price) / entry_price
@@ -98,22 +97,14 @@ def run_backtest(
                 krw -= invest
                 entry_price = price
                 position = "long"
-                trades.append({
-                    "time": ts,
-                    "side": "buy",
-                    "price": price,
-                    "volume": btc,
-                })
+                trades.append({"time": ts, "side": "buy", "price": price, "volume": btc})
 
         elif action == "sell" and position == "long":
             krw_return = btc * price
             pnl = krw_return - (btc * entry_price)
             krw += krw_return
             trades.append({
-                "time": ts,
-                "side": "sell",
-                "price": price,
-                "volume": btc,
+                "time": ts, "side": "sell", "price": price, "volume": btc,
                 "pnl": round(pnl, 0),
                 "pnl_pct": round((price - entry_price) / entry_price * 100, 2),
             })
@@ -121,27 +112,25 @@ def run_backtest(
             position = "none"
             entry_price = 0.0
 
-        # Equity value at this point
         total_value = krw + btc * price
         equity_curve.append({"time": ts, "value": round(total_value, 0)})
 
-    # Final equity
     final_price = float(df["close"].iloc[-1])
     final_value = krw + btc * final_price
 
-    # Metrics
     total_return = (final_value - initial_budget) / initial_budget * 100
     sell_trades = [t for t in trades if t["side"] == "sell"]
     winning = [t for t in sell_trades if t.get("pnl", 0) > 0]
     win_rate = len(winning) / len(sell_trades) * 100 if sell_trades else 0
 
-    # MDD
     equity_values = np.array([e["value"] for e in equity_curve])
-    running_max = np.maximum.accumulate(equity_values)
-    drawdowns = (equity_values - running_max) / running_max
-    mdd = float(drawdowns.min() * 100) if len(drawdowns) > 0 else 0
+    if len(equity_values) > 0:
+        running_max = np.maximum.accumulate(equity_values)
+        drawdowns = (equity_values - running_max) / running_max
+        mdd = float(drawdowns.min() * 100)
+    else:
+        mdd = 0
 
-    # Sharpe (simplified, daily returns)
     if len(equity_values) > 1:
         returns = np.diff(equity_values) / equity_values[:-1]
         sharpe = float(returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
@@ -159,6 +148,23 @@ def run_backtest(
             "sharpe_ratio": round(sharpe, 3),
             "data_points": len(df),
         },
-        "trades": trades[-100:],  # 최근 100건
-        "equity_curve": equity_curve[::max(1, len(equity_curve) // 500)],  # 최대 500포인트
+        "trades": trades[-100:],
+        "equity_curve": equity_curve[::max(1, len(equity_curve) // 500)],
     }
+
+
+def run_backtest(
+    market: str,
+    interval: str,
+    strategy: str,
+    params: dict,
+    days: int = 30,
+    initial_budget: float = 10000000,
+    order_ratio: float = 0.5,
+    stop_loss: float = 0.03,
+    take_profit: float = 0.05,
+) -> dict:
+    df = download_history(market, interval, days)
+    if df.empty or len(df) < 50:
+        return {"error": "Not enough historical data"}
+    return run_backtest_on_df(df, strategy, params, initial_budget, order_ratio, stop_loss, take_profit)

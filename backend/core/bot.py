@@ -20,6 +20,9 @@ class BotConfig:
     order_ratio: float = 0.5     # 예산의 몇 % 투자
     stop_loss: float = 0.03      # 손절 3%
     take_profit: float = 0.05    # 익절 5%
+    auto_rebalance: bool = False
+    rebalance_interval_candles: int = 30
+    rebalance_threshold: float = 0.20
 
 
 @dataclass
@@ -35,6 +38,9 @@ class BotState:
     last_signal: str = "hold"
     last_signal_reason: str = ""
     last_check: str = ""
+    rebalance_count: int = 0
+    last_rebalanced: str = ""
+    candle_counter: int = 0
 
 
 # 전역 봇 상태
@@ -67,6 +73,9 @@ def get_bot_status() -> dict:
         "last_signal": state.last_signal,
         "last_signal_reason": state.last_signal_reason,
         "last_check": state.last_check,
+        "rebalancing_enabled": config.auto_rebalance if config else False,
+        "last_rebalanced": state.last_rebalanced,
+        "rebalance_count": state.rebalance_count,
         "config": asdict(config) if config else None,
     }
 
@@ -160,6 +169,82 @@ async def _live_sell(config: BotConfig, price: float) -> bool:
     return True
 
 
+async def _rebalance_check(config: BotConfig):
+    """주기적 그리드 서치로 최적 전략 재평가 및 자동 전환"""
+    state = _bot_state
+
+    # 포지션 보유 중이면 전략 전환 금지
+    if state.position == "long":
+        return
+
+    try:
+        from core.recommender import PARAM_GRID, score_result
+        from core.backtest import download_history, run_backtest_on_df
+        from concurrent.futures import ThreadPoolExecutor
+
+        loop = asyncio.get_event_loop()
+        executor = ThreadPoolExecutor(max_workers=6)
+
+        df = await loop.run_in_executor(
+            executor, lambda: download_history(config.market, config.interval, days=3)
+        )
+        if df is None or df.empty or len(df) < 60:
+            executor.shutdown(wait=False)
+            return
+
+        def score_combo(strategy, params):
+            try:
+                result = run_backtest_on_df(
+                    df, strategy, params,
+                    order_ratio=config.order_ratio,
+                    stop_loss=config.stop_loss,
+                    take_profit=config.take_profit,
+                )
+                return score_result(result.get("summary", {}))
+            except Exception:
+                return -999.0
+
+        tasks = [
+            loop.run_in_executor(executor, score_combo, s, p)
+            for s, p in PARAM_GRID
+        ]
+        scores = await asyncio.gather(*tasks, return_exceptions=True)
+
+        valid_scores = [
+            (i, s) for i, s in enumerate(scores)
+            if not isinstance(s, Exception) and s > -999
+        ]
+        if not valid_scores:
+            executor.shutdown(wait=False)
+            return
+
+        best_idx, best_score = max(valid_scores, key=lambda x: x[1])
+        best_strategy, best_params = PARAM_GRID[best_idx]
+
+        # 현재 전략 스코어
+        current_score = await loop.run_in_executor(
+            executor, score_combo, config.strategy, config.params
+        )
+
+        executor.shutdown(wait=False)
+
+        # 현재 전략보다 threshold 이상 높은 경우 전환
+        should_switch = False
+        if current_score <= 0 and best_score > 0:
+            should_switch = True
+        elif current_score > 0 and best_score > current_score * (1 + config.rebalance_threshold):
+            should_switch = True
+
+        if should_switch and (best_strategy != config.strategy or best_params != config.params):
+            config.strategy = best_strategy
+            config.params = best_params
+            state.last_rebalanced = datetime.now().strftime("%H:%M:%S")
+            state.rebalance_count += 1
+
+    except Exception:
+        pass  # 재조정 실패가 메인 루프에 영향 없도록
+
+
 async def _bot_loop(config: BotConfig):
     state = _bot_state
     state.running = True
@@ -231,6 +316,13 @@ async def _bot_loop(config: BotConfig):
                     await db.commit()
                 finally:
                     await db.close()
+
+            # 자동 재조정 체크
+            if config.auto_rebalance:
+                state.candle_counter += 1
+                if state.candle_counter >= config.rebalance_interval_candles:
+                    state.candle_counter = 0
+                    asyncio.create_task(_rebalance_check(config))
 
         except asyncio.CancelledError:
             break

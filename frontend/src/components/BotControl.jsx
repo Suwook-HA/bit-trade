@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { startBot, stopBot, getBotStatus } from '../services/api'
+import { startBot, stopBot, getBotStatus, getRecommendation } from '../services/api'
 
 const STRATEGIES = [
   { value: 'rsi', label: 'RSI 과매수/과매도' },
@@ -13,11 +13,89 @@ const DEFAULT_PARAMS = {
   bollinger: { period: 20, std_dev: 2.0 },
   ma_cross: { short_period: 5, long_period: 20 },
 }
+const STRATEGY_LABELS = { rsi: 'RSI', macd: 'MACD', bollinger: '볼린저 밴드', ma_cross: 'MA 크로스' }
+const CONDITION_META = {
+  trending_up:   { label: '상승 추세', color: '#34d399' },
+  trending_down: { label: '하락 추세', color: '#f87171' },
+  ranging:       { label: '횡보 구간', color: '#60a5fa' },
+  volatile:      { label: '고변동성', color: '#f59e0b' },
+  unknown:       { label: '분석 중',  color: '#71717a' },
+}
 
 const label = { fontSize: '11px', color: '#71717a', marginBottom: '4px', display: 'block', fontWeight: 500 }
 const row2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
 const divider = { borderTop: '1px solid #27272a', margin: '12px 0' }
 
+// ── 추천 패널 ─────────────────────────────────────────────────
+function RecommendationPanel({ data, onApply }) {
+  const cond = CONDITION_META[data.market_condition?.condition] || CONDITION_META.unknown
+
+  return (
+    <div>
+      {/* 시장 상태 배지 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '11px', color: '#71717a' }}>시장 상태:</span>
+        <span style={{
+          padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+          background: `${cond.color}22`, color: cond.color,
+        }}>{cond.label}</span>
+        <span style={{ fontSize: '10px', color: '#52525b', flex: 1 }}>
+          {data.market_condition?.reason}
+        </span>
+      </div>
+
+      {/* 추천 카드 */}
+      {data.recommendations.map((rec, i) => {
+        const m = rec.metrics
+        return (
+          <div key={i} style={{
+            background: '#09090b', border: '1px solid #27272a',
+            borderRadius: '8px', padding: '10px 12px', marginBottom: '8px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <span style={{ fontWeight: 700, fontSize: '13px', color: '#fafafa' }}>
+                {i + 1}. {STRATEGY_LABELS[rec.strategy] || rec.strategy}
+              </span>
+              <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 700 }}>
+                점수 {rec.score.toFixed(2)}
+              </span>
+            </div>
+            <div style={{ fontSize: '10px', color: '#52525b', marginBottom: '6px' }}>
+              {Object.entries(rec.params).map(([k, v]) => `${k}=${v}`).join(' / ')}
+            </div>
+            <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
+              {[
+                { lbl: '수익률', val: `${m.total_return_pct >= 0 ? '+' : ''}${m.total_return_pct}%`, col: m.total_return_pct >= 0 ? '#34d399' : '#f87171' },
+                { lbl: '샤프',   val: m.sharpe_ratio.toFixed(2), col: '#60a5fa' },
+                { lbl: '승률',   val: `${m.win_rate_pct}%`,      col: '#a78bfa' },
+              ].map(({ lbl: l, val, col }) => (
+                <div key={l} style={{ flex: 1, background: '#18181b', borderRadius: '4px', padding: '4px 6px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '9px', color: '#52525b' }}>{l}</div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: col }}>{val}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>{rec.reason}</div>
+            <button
+              onClick={() => onApply(rec.strategy, rec.params)}
+              style={{
+                width: '100%', padding: '5px 0', borderRadius: '4px',
+                border: '1px solid #3b82f6', background: 'rgba(59,130,246,0.1)',
+                color: '#60a5fa', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+              }}>
+              이 전략 적용
+            </button>
+          </div>
+        )
+      })}
+      <div style={{ fontSize: '10px', color: '#3f3f46', textAlign: 'right' }}>
+        {data.total_combinations_tested}개 조합 분석 · {data.cached ? '캐시됨' : '실시간'}
+      </div>
+    </div>
+  )
+}
+
+// ── 실행 중 상태 ──────────────────────────────────────────────
 function RunningStatus({ status }) {
   const fmt = n => n?.toLocaleString('ko-KR')
   const pnl = status.current_pnl_pct
@@ -60,13 +138,30 @@ function RunningStatus({ status }) {
           { lbl: '총 거래', val: `${status.total_trades}회` },
           { lbl: '누적 손익', val: `${totalPnl >= 0 ? '+' : ''}₩${fmt(Math.abs(totalPnl))}`, col: totalPnl >= 0 ? '#34d399' : '#f87171' },
           { lbl: '모의 잔고', val: `₩${fmt(Math.round(status.paper_krw / 10000))}만` },
-        ].map(({ lbl, val, col }) => (
-          <div key={lbl} className="stat-card">
-            <div style={{ fontSize: '10px', color: '#52525b', marginBottom: '3px' }}>{lbl}</div>
+        ].map(({ lbl: l, val, col }) => (
+          <div key={l} className="stat-card">
+            <div style={{ fontSize: '10px', color: '#52525b', marginBottom: '3px' }}>{l}</div>
             <div style={{ fontSize: '12px', fontWeight: 700, color: col || '#fafafa' }}>{val}</div>
           </div>
         ))}
       </div>
+
+      {/* 자동 재조정 배지 */}
+      {status.rebalancing_enabled && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '4px 10px', background: 'rgba(167,139,250,0.1)',
+          border: '1px solid rgba(167,139,250,0.3)', borderRadius: '6px',
+        }}>
+          <span style={{ fontSize: '10px', color: '#a78bfa', fontWeight: 700 }}>
+            ♻ 자동 재조정 ON
+            {status.rebalance_count > 0 && ` (${status.rebalance_count}회)`}
+          </span>
+          <span style={{ fontSize: '10px', color: '#52525b' }}>
+            {status.last_rebalanced ? `마지막: ${status.last_rebalanced}` : '대기 중'}
+          </span>
+        </div>
+      )}
 
       <div style={{ background: '#09090b', borderRadius: '6px', padding: '8px 10px', fontSize: '11px', color: '#71717a' }}>
         <span style={{ marginRight: '6px' }}>🔍</span>
@@ -77,6 +172,7 @@ function RunningStatus({ status }) {
   )
 }
 
+// ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function BotControl() {
   const [strategy, setStrategy] = useState('rsi')
   const [params, setParams] = useState(DEFAULT_PARAMS.rsi)
@@ -85,8 +181,12 @@ export default function BotControl() {
   const [orderRatio, setOrderRatio] = useState(0.5)
   const [stopLoss, setStopLoss] = useState(3)
   const [takeProfit, setTakeProfit] = useState(5)
+  const [autoRebalance, setAutoRebalance] = useState(false)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [recommendations, setRecommendations] = useState(null)
+  const [recLoading, setRecLoading] = useState(false)
+  const [recError, setRecError] = useState(null)
   const pollRef = useRef(null)
 
   useEffect(() => { setParams(DEFAULT_PARAMS[strategy]) }, [strategy])
@@ -105,9 +205,30 @@ export default function BotControl() {
         market: 'KRW-BTC', interval: botInterval, strategy, params, mode,
         budget: 10000000, order_ratio: orderRatio,
         stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
+        auto_rebalance: autoRebalance,
+        rebalance_interval_candles: 30,
       })
     } catch (e) { alert('봇 시작 실패: ' + e.message) }
     setLoading(false)
+  }
+
+  const handleRecommend = async () => {
+    setRecLoading(true)
+    setRecError(null)
+    try {
+      const data = await getRecommendation({ market: 'KRW-BTC', interval: botInterval, days: 7 })
+      if (data.error) throw new Error(data.error)
+      setRecommendations(data)
+    } catch (e) {
+      setRecError('추천 실패: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setRecLoading(false)
+    }
+  }
+
+  const applyRecommendation = (rec_strategy, rec_params) => {
+    setStrategy(rec_strategy)
+    setParams(rec_params)
   }
 
   const updateParam = (key, val) => setParams(p => ({ ...p, [key]: isNaN(Number(val)) ? val : Number(val) }))
@@ -130,7 +251,7 @@ export default function BotControl() {
         </div>
       </div>
 
-      <div style={{ padding: '14px', flex: 1 }}>
+      <div style={{ padding: '14px', flex: 1, overflowY: 'auto' }}>
         {status?.running ? (
           <RunningStatus status={status} />
         ) : (
@@ -195,6 +316,42 @@ export default function BotControl() {
                 onChange={e => setOrderRatio(Number(e.target.value))}
                 style={{ width: '100%', accentColor: '#3b82f6' }} />
             </div>
+
+            {/* 자동 재조정 체크박스 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input type="checkbox" id="autoRebalance" checked={autoRebalance}
+                onChange={e => setAutoRebalance(e.target.checked)}
+                style={{ accentColor: '#a78bfa', width: '14px', height: '14px' }} />
+              <label htmlFor="autoRebalance" style={{ ...label, marginBottom: 0, color: '#a78bfa', cursor: 'pointer' }}>
+                자동 재조정 (30캔들마다 전략 재평가)
+              </label>
+            </div>
+
+            <div style={divider} />
+
+            {/* 전략 추천 버튼 */}
+            <button
+              onClick={handleRecommend}
+              disabled={recLoading}
+              style={{
+                width: '100%', padding: '8px 0', borderRadius: '6px',
+                border: '1px solid #3f3f46', background: recLoading ? '#18181b' : '#1c1c1e',
+                color: recLoading ? '#52525b' : '#a1a1aa', fontSize: '12px',
+                fontWeight: 600, cursor: recLoading ? 'not-allowed' : 'pointer',
+              }}>
+              {recLoading ? '⏳ 전략 분석 중... (35개 조합)' : '🔍 최적 전략 추천 받기'}
+            </button>
+
+            {recError && (
+              <div style={{ fontSize: '11px', color: '#f87171' }}>{recError}</div>
+            )}
+
+            {recommendations && !recLoading && (
+              <RecommendationPanel
+                data={recommendations}
+                onApply={applyRecommendation}
+              />
+            )}
           </div>
         )}
       </div>

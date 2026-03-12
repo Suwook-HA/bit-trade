@@ -45,6 +45,8 @@ class BotStartRequest(BaseModel):
     order_ratio: float = 0.5
     stop_loss: float = 0.03
     take_profit: float = 0.05
+    auto_rebalance: bool = False
+    rebalance_interval_candles: int = 30
 
 
 @router.post("/bot/start")
@@ -92,6 +94,24 @@ async def backtest(req: BacktestRequest):
         take_profit=req.take_profit,
     ))
     return result
+
+
+# --- Strategy Recommend ---
+
+class RecommendRequest(BaseModel):
+    market: str = "KRW-BTC"
+    interval: str = "1m"
+    days: int = 7
+
+
+@router.post("/strategy/recommend")
+async def strategy_recommend(req: RecommendRequest):
+    from core.recommender import run_grid_search
+    return await run_grid_search(
+        market=req.market,
+        interval=req.interval,
+        days=req.days,
+    )
 
 
 # --- Portfolio ---

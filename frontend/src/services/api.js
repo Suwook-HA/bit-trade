@@ -25,3 +25,6 @@ export const runBacktest = (params) =>
 
 export const getPortfolio = () =>
   api.get('/portfolio').then(r => r.data)
+
+export const getRecommendation = (params) =>
+  api.post('/strategy/recommend', params).then(r => r.data)
