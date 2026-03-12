@@ -23,6 +23,7 @@ class BotConfig:
     auto_rebalance: bool = False
     rebalance_interval_candles: int = 30
     rebalance_threshold: float = 0.20
+    execution_interval_seconds: int = 0  # 0 = 캔들 타임프레임과 동일
 
 
 @dataclass
@@ -261,9 +262,10 @@ async def _bot_loop(config: BotConfig):
         finally:
             await db.close()
 
-    interval_seconds = {
+    candle_seconds = {
         "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
     }.get(config.interval, 60)
+    interval_seconds = config.execution_interval_seconds if config.execution_interval_seconds > 0 else candle_seconds
 
     while state.running:
         try:

@@ -182,6 +182,7 @@ export default function BotControl() {
   const [stopLoss, setStopLoss] = useState(3)
   const [takeProfit, setTakeProfit] = useState(5)
   const [autoRebalance, setAutoRebalance] = useState(false)
+  const [execInterval, setExecInterval] = useState(0)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [recommendations, setRecommendations] = useState(null)
@@ -207,6 +208,7 @@ export default function BotControl() {
         stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
         auto_rebalance: autoRebalance,
         rebalance_interval_candles: 30,
+        execution_interval_seconds: execInterval,
       })
     } catch (e) { alert('봇 시작 실패: ' + e.message) }
     setLoading(false)
@@ -292,6 +294,27 @@ export default function BotControl() {
                   {['1m','3m','5m','15m','1h'].map(iv => <option key={iv} value={iv}>{iv}</option>)}
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label style={label}>
+                실행 주기&nbsp;
+                <span style={{ color: '#60a5fa', fontWeight: 700 }}>
+                  {execInterval === 0 ? '캔들 타임프레임 동일' : `${execInterval}초`}
+                </span>
+              </label>
+              <select className="select-field" value={execInterval} onChange={e => setExecInterval(Number(e.target.value))}>
+                <option value={0}>타임프레임 동일 (기본)</option>
+                <option value={10}>10초</option>
+                <option value={30}>30초</option>
+                <option value={60}>1분</option>
+                <option value={120}>2분</option>
+                <option value={300}>5분</option>
+                <option value={600}>10분</option>
+                <option value={900}>15분</option>
+                <option value={1800}>30분</option>
+                <option value={3600}>1시간</option>
+              </select>
             </div>
 
             <div style={row2}>

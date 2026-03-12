@@ -47,6 +47,7 @@ class BotStartRequest(BaseModel):
     take_profit: float = 0.05
     auto_rebalance: bool = False
     rebalance_interval_candles: int = 30
+    execution_interval_seconds: int = 0
 
 
 @router.post("/bot/start")
