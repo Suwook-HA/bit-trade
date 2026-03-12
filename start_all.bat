@@ -6,19 +6,14 @@ echo ===============================
 echo   BTC Trading App Starting...
 echo ===============================
 
-set ROOT=%~dp0
-set PYTHON=C:\Users\etri\anaconda3\python.exe
-set NODE=C:\Users\etri\anaconda3\node.exe
-set VITE=%ROOT%frontend\node_modules\vite\bin\vite.js
-
 echo.
 echo [1/2] 백엔드 서버 시작 (포트 8000)...
-start "Backend (FastAPI)" cmd /k "%PYTHON% "%ROOT%start_backend.py""
+start "Backend (FastAPI)" powershell -NoExit -Command "& 'C:\Users\etri\anaconda3\python.exe' 'C:\Users\etri\Desktop\Coding\Trading\start_backend.py'"
 
 timeout /t 5 /nobreak > nul
 
 echo [2/2] 프론트엔드 서버 시작 (포트 5173)...
-start "Frontend (Vite)" cmd /k "%NODE% "%VITE%" "%ROOT%frontend" --port 5173 --config "%ROOT%frontend\vite.config.js""
+start "Frontend (Vite)" powershell -NoExit -Command "& 'C:\Users\etri\anaconda3\node.exe' 'C:\Users\etri\Desktop\Coding\Trading\frontend\node_modules\vite\bin\vite.js' 'C:\Users\etri\Desktop\Coding\Trading\frontend' --port 5173 --config 'C:\Users\etri\Desktop\Coding\Trading\frontend\vite.config.js'"
 
 timeout /t 5 /nobreak > nul
 
