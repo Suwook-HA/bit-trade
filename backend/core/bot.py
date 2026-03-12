@@ -250,17 +250,10 @@ async def _bot_loop(config: BotConfig):
     state = _bot_state
     state.running = True
 
-    # Initialize paper portfolio from DB
+    # paper 모드: budget 기준으로 시작 (DB 잔고는 무시하고 항상 지정 예산으로 초기화)
     if config.mode == "paper":
-        db = await get_db()
-        try:
-            cursor = await db.execute("SELECT krw_balance, btc_balance FROM paper_portfolio ORDER BY id DESC LIMIT 1")
-            row = await cursor.fetchone()
-            if row:
-                state.paper_krw = row[0]
-                state.paper_btc = row[1]
-        finally:
-            await db.close()
+        state.paper_krw = config.budget
+        state.paper_btc = 0.0
 
     candle_seconds = {
         "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
@@ -347,6 +340,8 @@ async def start_bot(config_dict: dict) -> dict:
         if k in BotConfig.__dataclass_fields__
     })
     _bot_state = BotState()
+    if _bot_config.mode == "paper":
+        _bot_state.paper_krw = _bot_config.budget
 
     _bot_task = asyncio.create_task(_bot_loop(_bot_config))
     return {"status": "started", "config": asdict(_bot_config)}

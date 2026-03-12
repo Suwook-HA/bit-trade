@@ -183,6 +183,7 @@ export default function BotControl() {
   const [takeProfit, setTakeProfit] = useState(5)
   const [autoRebalance, setAutoRebalance] = useState(false)
   const [execInterval, setExecInterval] = useState(0)
+  const [budget, setBudget] = useState(1000000)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [recommendations, setRecommendations] = useState(null)
@@ -204,7 +205,7 @@ export default function BotControl() {
     try {
       await startBot({
         market: 'KRW-BTC', interval: botInterval, strategy, params, mode,
-        budget: 10000000, order_ratio: orderRatio,
+        budget, order_ratio: orderRatio,
         stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
         auto_rebalance: autoRebalance,
         rebalance_interval_candles: 30,
@@ -315,6 +316,44 @@ export default function BotControl() {
                 <option value={1800}>30분</option>
                 <option value={3600}>1시간</option>
               </select>
+            </div>
+
+            <div>
+              <label style={label}>
+                투자 한도&nbsp;
+                <span style={{ color: '#fbbf24', fontWeight: 700 }}>
+                  {budget >= 1000000
+                    ? `₩${(budget / 10000).toLocaleString()}만`
+                    : `₩${budget.toLocaleString()}`}
+                </span>
+              </label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  type="number"
+                  value={budget}
+                  onChange={e => setBudget(Math.max(10000, Number(e.target.value)))}
+                  className="input-field"
+                  min={10000}
+                  step={100000}
+                  style={{ flex: 1 }}
+                />
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {[500000, 1000000, 5000000, 10000000].map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setBudget(v)}
+                      style={{
+                        padding: '0 8px', borderRadius: '4px', fontSize: '10px',
+                        border: `1px solid ${budget === v ? '#fbbf24' : '#3f3f46'}`,
+                        background: budget === v ? 'rgba(251,191,36,0.15)' : '#18181b',
+                        color: budget === v ? '#fbbf24' : '#71717a',
+                        cursor: 'pointer', whiteSpace: 'nowrap',
+                      }}>
+                      {v / 10000}만
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <div style={row2}>
