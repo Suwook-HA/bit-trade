@@ -3,7 +3,7 @@ import { createChart, CrosshairMode } from 'lightweight-charts'
 import { getCandles, getIndicators } from '../services/api'
 import { createTickerWS } from '../services/websocket'
 
-const INTERVALS = ['1m', '3m', '5m', '15m', '1h', '1d']
+const INTERVALS = ['5s', '10s', '15s', '30s', '1m', '3m', '5m', '15m', '1h', '1d']
 const MARKET = 'KRW-BTC'
 
 export default function Chart() {
@@ -87,7 +87,7 @@ export default function Chart() {
       if (data.type !== 'ticker' || data.market !== MARKET) return
       if (!candleSeriesRef.current || !lastCandleRef.current) return
       const now = Math.floor(Date.now() / 1000)
-      const secs = { '1m':60,'3m':180,'5m':300,'15m':900,'1h':3600,'1d':86400 }[interval] || 60
+      const secs = { '5s':5,'10s':10,'15s':15,'30s':30,'1m':60,'3m':180,'5m':300,'15m':900,'1h':3600,'1d':86400 }[interval] || 60
       const candleTime = Math.floor(now / secs) * secs
       const last = lastCandleRef.current
       if (candleTime === last.time) {

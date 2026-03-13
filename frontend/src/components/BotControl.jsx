@@ -13,14 +13,17 @@ const STRATEGIES = [
   { value: 'macd', label: 'MACD 크로스' },
   { value: 'bollinger', label: '볼린저 밴드' },
   { value: 'ma_cross', label: 'MA 골든/데드 크로스' },
+  { value: 'vwap', label: 'VWAP 이탈 (스캘핑)' },
 ]
 const DEFAULT_PARAMS = {
   rsi: { period: 14, oversold: 30, overbought: 70 },
   macd: { fast: 12, slow: 26, signal: 9 },
   bollinger: { period: 20, std_dev: 2.0 },
   ma_cross: { short_period: 5, long_period: 20 },
+  vwap: { deviation: 0.003, period: 20 },
 }
-const STRATEGY_LABELS = { rsi: 'RSI', macd: 'MACD', bollinger: '볼린저 밴드', ma_cross: 'MA 크로스' }
+const STRATEGY_LABELS = { rsi: 'RSI', macd: 'MACD', bollinger: '볼린저 밴드', ma_cross: 'MA 크로스', vwap: 'VWAP' }
+const SCALPING_INTERVALS = ['5s', '10s', '15s', '30s']
 const CONDITION_META = {
   trending_up:   { label: '상승 추세', color: '#34d399' },
   trending_down: { label: '하락 추세', color: '#f87171' },
@@ -203,7 +206,20 @@ export default function BotControl() {
   const [recError, setRecError] = useState(null)
   const pollRef = useRef(null)
 
+  const isScalping = SCALPING_INTERVALS.includes(botInterval)
+
   useEffect(() => { setParams(DEFAULT_PARAMS[strategy]) }, [strategy])
+
+  useEffect(() => {
+    if (SCALPING_INTERVALS.includes(botInterval)) {
+      setStopLoss(0.3)
+      setTakeProfit(0.5)
+      setExecInterval(0)
+    } else {
+      setStopLoss(3)
+      setTakeProfit(5)
+    }
+  }, [botInterval])
 
   useEffect(() => {
     const load = async () => { try { setStatus(await getBotStatus()) } catch {} }
@@ -340,31 +356,44 @@ export default function BotControl() {
               <div>
                 <label style={label}>타임프레임</label>
                 <select className="select-field" value={botInterval} onChange={e => setBotInterval(e.target.value)}>
-                  {['1m','3m','5m','15m','1h'].map(iv => <option key={iv} value={iv}>{iv}</option>)}
+                  {['5s','10s','15s','30s','1m','3m','5m','15m','1h'].map(iv => <option key={iv} value={iv}>{iv}</option>)}
                 </select>
               </div>
             </div>
 
-            <div>
-              <label style={label}>
-                실행 주기&nbsp;
-                <span style={{ color: '#60a5fa', fontWeight: 700 }}>
-                  {execInterval === 0 ? '캔들 타임프레임 동일' : `${execInterval}초`}
-                </span>
-              </label>
-              <select className="select-field" value={execInterval} onChange={e => setExecInterval(Number(e.target.value))}>
-                <option value={0}>타임프레임 동일 (기본)</option>
-                <option value={10}>10초</option>
-                <option value={30}>30초</option>
-                <option value={60}>1분</option>
-                <option value={120}>2분</option>
-                <option value={300}>5분</option>
-                <option value={600}>10분</option>
-                <option value={900}>15분</option>
-                <option value={1800}>30분</option>
-                <option value={3600}>1시간</option>
-              </select>
-            </div>
+            {isScalping && (
+              <div style={{
+                padding: '8px 12px', borderRadius: '6px', fontSize: '11px',
+                background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)',
+                color: '#fbbf24', lineHeight: 1.5,
+              }}>
+                ⚡ 스캘핑 모드: 이벤트 주도(WebSocket tick) 루프 자동 적용<br />
+                수수료+슬리피지 0.14% 기준, 익절 ≥ 0.21% 권장 (현재 {takeProfit}%)
+              </div>
+            )}
+
+            {!isScalping && (
+              <div>
+                <label style={label}>
+                  실행 주기&nbsp;
+                  <span style={{ color: '#60a5fa', fontWeight: 700 }}>
+                    {execInterval === 0 ? '캔들 타임프레임 동일' : `${execInterval}초`}
+                  </span>
+                </label>
+                <select className="select-field" value={execInterval} onChange={e => setExecInterval(Number(e.target.value))}>
+                  <option value={0}>타임프레임 동일 (기본)</option>
+                  <option value={10}>10초</option>
+                  <option value={30}>30초</option>
+                  <option value={60}>1분</option>
+                  <option value={120}>2분</option>
+                  <option value={300}>5분</option>
+                  <option value={600}>10분</option>
+                  <option value={900}>15분</option>
+                  <option value={1800}>30분</option>
+                  <option value={3600}>1시간</option>
+                </select>
+              </div>
+            )}
 
             <div>
               <label style={label}>

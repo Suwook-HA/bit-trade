@@ -7,12 +7,14 @@ const STRATEGIES = [
   { value: 'macd', label: 'MACD' },
   { value: 'bollinger', label: '볼린저 밴드' },
   { value: 'ma_cross', label: 'MA 크로스' },
+  { value: 'vwap', label: 'VWAP (스캘핑)' },
 ]
 const DEFAULT_PARAMS = {
   rsi: { period: 14, oversold: 30, overbought: 70 },
   macd: { fast: 12, slow: 26, signal: 9 },
   bollinger: { period: 20, std_dev: 2.0 },
   ma_cross: { short_period: 5, long_period: 20 },
+  vwap: { deviation: 0.003, period: 20 },
 }
 
 const fmt = n => n?.toLocaleString('ko-KR')
@@ -91,7 +93,7 @@ export default function Backtest() {
             <div>
               <label style={label}>타임프레임</label>
               <select className="select-field" value={interval} onChange={e => setInterval(e.target.value)}>
-                {['1m','5m','15m','1h'].map(iv => <option key={iv} value={iv}>{iv}</option>)}
+                {['5s','10s','15s','30s','1m','5m','15m','1h'].map(iv => <option key={iv} value={iv}>{iv}</option>)}
               </select>
             </div>
             <div>
