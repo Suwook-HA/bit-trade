@@ -1,7 +1,9 @@
 import asyncio
-import json
+import logging
 from fastapi import WebSocket, WebSocketDisconnect
 from core.upbit_client import UpbitWebSocketClient, get_ticker
+
+logger = logging.getLogger(__name__)
 
 # 연결된 클라이언트 목록
 _ticker_clients: set[WebSocket] = set()
@@ -22,6 +24,9 @@ async def _broadcast(clients: set[WebSocket], data: dict):
 
 async def on_ticker_update(data: dict):
     await _broadcast(_ticker_clients, {"type": "ticker", **data})
+    # 캔들 구독 클라이언트에게 새 가격 도착 알림 → 프론트가 캔들 재조회
+    if _candle_clients:
+        await _broadcast(_candle_clients, {"type": "candle_update", "market": data.get("market", "KRW-BTC")})
 
 
 async def start_upbit_stream(markets: list[str] = ["KRW-BTC"]):
@@ -37,9 +42,10 @@ async def handle_ticker_ws(websocket: WebSocket):
     await websocket.accept()
     _ticker_clients.add(websocket)
 
-    # Send initial ticker immediately
+    # Send initial ticker immediately (market 파라미터 반영)
     try:
-        ticker = get_ticker("KRW-BTC")
+        market = websocket.query_params.get("market", "KRW-BTC")
+        ticker = get_ticker(market)
         if ticker:
             await websocket.send_json({"type": "ticker", **ticker})
     except Exception:

@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { startBot, stopBot, getBotStatus, getRecommendation } from '../services/api'
 
+const MARKETS = [
+  { value: 'KRW-BTC', label: '비트코인 (BTC)' },
+  { value: 'KRW-ETH', label: '이더리움 (ETH)' },
+  { value: 'KRW-SOL', label: '솔라나 (SOL)' },
+  { value: 'KRW-XRP', label: '리플 (XRP)' },
+]
+
 const STRATEGIES = [
   { value: 'rsi', label: 'RSI 과매수/과매도' },
   { value: 'macd', label: 'MACD 크로스' },
@@ -174,6 +181,7 @@ function RunningStatus({ status }) {
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function BotControl() {
+  const [market, setMarket] = useState('KRW-BTC')
   const [strategy, setStrategy] = useState('rsi')
   const [params, setParams] = useState(DEFAULT_PARAMS.rsi)
   const [botInterval, setBotInterval] = useState('1m')
@@ -189,6 +197,7 @@ export default function BotControl() {
   const [trailingStopPct, setTrailingStopPct] = useState(2)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [startError, setStartError] = useState(null)
   const [recommendations, setRecommendations] = useState(null)
   const [recLoading, setRecLoading] = useState(false)
   const [recError, setRecError] = useState(null)
@@ -205,9 +214,10 @@ export default function BotControl() {
 
   const handleStart = async () => {
     setLoading(true)
+    setStartError(null)
     try {
       await startBot({
-        market: 'KRW-BTC', interval: botInterval, strategy, params, mode,
+        market, interval: botInterval, strategy, params, mode,
         budget, order_ratio: orderRatio,
         stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
         auto_rebalance: autoRebalance,
@@ -217,7 +227,9 @@ export default function BotControl() {
         trailing_stop_pct: trailingStopPct / 100,
         auto_strategy: autoStrategy,
       })
-    } catch (e) { alert('봇 시작 실패: ' + e.message) }
+    } catch (e) {
+      setStartError('봇 시작 실패: ' + (e.response?.data?.detail || e.message))
+    }
     setLoading(false)
   }
 
@@ -225,7 +237,7 @@ export default function BotControl() {
     setRecLoading(true)
     setRecError(null)
     try {
-      const data = await getRecommendation({ market: 'KRW-BTC', interval: botInterval, days: 7 })
+      const data = await getRecommendation({ market, interval: botInterval, days: 7 })
       if (data.error) throw new Error(data.error)
       setRecommendations(data)
     } catch (e) {
@@ -309,6 +321,13 @@ export default function BotControl() {
             </>)}
 
             <div style={divider} />
+
+            <div>
+              <label style={label}>종목</label>
+              <select className="select-field" value={market} onChange={e => setMarket(e.target.value)}>
+                {MARKETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
 
             <div style={row2}>
               <div>
@@ -454,7 +473,7 @@ export default function BotControl() {
                 color: recLoading ? '#52525b' : '#a1a1aa', fontSize: '12px',
                 fontWeight: 600, cursor: recLoading ? 'not-allowed' : 'pointer',
               }}>
-              {recLoading ? '⏳ 전략 분석 중... (35개 조합)' : '🔍 최적 전략 추천 받기'}
+              {recLoading ? '⏳ 전략 분석 중... (39개 조합)' : '🔍 최적 전략 추천 받기'}
             </button>
 
             {recError && (
@@ -472,6 +491,11 @@ export default function BotControl() {
       </div>
 
       <div style={{ padding: '0 14px 14px' }}>
+        {startError && (
+          <div style={{ fontSize: '11px', color: '#f87171', marginBottom: '8px', padding: '6px 10px', background: 'rgba(248,113,113,0.1)', borderRadius: '6px', border: '1px solid rgba(248,113,113,0.3)' }}>
+            {startError}
+          </div>
+        )}
         {status?.running ? (
           <button className="btn-danger" onClick={async () => { setLoading(true); await stopBot(); setLoading(false) }} disabled={loading}>
             ■ 봇 중지

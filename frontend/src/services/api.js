@@ -1,6 +1,11 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: '/api' })
+const API_KEY = import.meta.env.VITE_API_KEY || ''
+
+const api = axios.create({
+  baseURL: '/api',
+  headers: API_KEY ? { 'X-API-Key': API_KEY } : {},
+})
 
 export const getCandles = (market, interval = '1m', count = 200) =>
   api.get(`/candles/${market}`, { params: { interval, count } }).then(r => r.data)

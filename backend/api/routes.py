@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 
@@ -6,6 +6,7 @@ from core.upbit_client import get_candles, get_candles_df, get_ticker
 from core.strategies import compute_indicators_for_chart
 from core.bot import start_bot, stop_bot, get_bot_status
 from core.backtest import run_backtest
+from core.auth import verify_api_key
 from db.database import get_db
 
 router = APIRouter(prefix="/api")
@@ -55,7 +56,7 @@ class BotStartRequest(BaseModel):
     auto_strategy: bool = False
 
 
-@router.post("/bot/start")
+@router.post("/bot/start", dependencies=[Depends(verify_api_key)])
 async def bot_start(req: BotStartRequest):
     config = req.model_dump()
     if req.auto_strategy:
@@ -76,7 +77,7 @@ async def bot_start(req: BotStartRequest):
     return await start_bot(config)
 
 
-@router.post("/bot/stop")
+@router.post("/bot/stop", dependencies=[Depends(verify_api_key)])
 async def bot_stop():
     return await stop_bot()
 

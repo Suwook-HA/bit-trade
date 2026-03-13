@@ -1,12 +1,14 @@
 import asyncio
-import json
+import logging
 from datetime import datetime
 from typing import Optional
 from dataclasses import dataclass, field, asdict
 
 from core.upbit_client import get_candles_df, get_ticker, place_order, get_balance
 from core.strategies import get_signal
-from db.database import get_db
+from db.database import get_db, get_persistent_db
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,7 +55,6 @@ class BotState:
 _bot_config: Optional[BotConfig] = None
 _bot_state: BotState = BotState()
 _bot_task: Optional[asyncio.Task] = None
-_log_callbacks: list = []
 
 
 def get_bot_status() -> dict:
@@ -87,15 +88,13 @@ def get_bot_status() -> dict:
 
 
 async def _record_trade(mode: str, market: str, side: str, price: float, volume: float, strategy: str, pnl: float = 0):
-    db = await get_db()
-    try:
-        await db.execute(
-            "INSERT INTO trades (mode, market, side, price, volume, strategy, pnl) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (mode, market, side, price, volume, strategy, pnl)
-        )
-        await db.commit()
-    finally:
-        await db.close()
+    # 영속 커넥션 사용 - 봇 루프 내 빈번한 호출에서 커넥션 열고닫기 비용 제거
+    db = await get_persistent_db()
+    await db.execute(
+        "INSERT INTO trades (mode, market, side, price, volume, strategy, pnl) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (mode, market, side, price, volume, strategy, pnl)
+    )
+    await db.commit()
 
 
 async def _paper_buy(config: BotConfig, price: float) -> bool:
@@ -117,6 +116,7 @@ async def _paper_buy(config: BotConfig, price: float) -> bool:
     state.position = "long"
     state.total_trades += 1
 
+    logger.info("Paper BUY: price=%.0f, volume=%.6f, invest=%.0f KRW", buy_price, volume, invest_krw)
     await _record_trade("paper", config.market, "buy", buy_price, volume, config.strategy)
     return True
 
@@ -140,6 +140,7 @@ async def _paper_sell(config: BotConfig, price: float) -> bool:
     state.total_pnl += pnl
     state.position = "none"
 
+    logger.info("Paper SELL: price=%.0f, pnl=%.0f KRW (%.2f%%)", sell_price, pnl, pnl / (state.entry_volume * state.entry_price) * 100 if state.entry_volume * state.entry_price > 0 else 0)
     await _record_trade("paper", config.market, "sell", sell_price, volume, config.strategy, pnl)
     return True
 
@@ -154,15 +155,22 @@ async def _live_buy(config: BotConfig, price: float) -> bool:
 
     result = place_order("buy", config.market, volume=invest_krw)
     if "error" in result:
+        logger.error("Live BUY failed: %s", result["error"])
         return False
 
-    volume = invest_krw / price
-    state.entry_price = price
+    # 슬리피지 반영 진입가 + 수수료 반영 체결 수량
+    buy_price = price * (1 + config.slippage_rate)
+    fee = invest_krw * config.fee_rate
+    volume = (invest_krw - fee) / buy_price
+
+    state.entry_price = buy_price
     state.entry_volume = volume
+    state.peak_price = buy_price
     state.position = "long"
     state.total_trades += 1
 
-    await _record_trade("live", config.market, "buy", price, volume, config.strategy)
+    logger.info("Live BUY: price=%.0f (with slippage), volume=%.6f", buy_price, volume)
+    await _record_trade("live", config.market, "buy", buy_price, volume, config.strategy)
     return True
 
 
@@ -174,14 +182,21 @@ async def _live_sell(config: BotConfig, price: float) -> bool:
 
     result = place_order("sell", config.market, volume=btc_balance)
     if "error" in result:
+        logger.error("Live SELL failed: %s", result["error"])
         return False
 
-    pnl = btc_balance * price - state.entry_volume * state.entry_price
+    # 슬리피지 반영 체결가로 PnL 계산
+    sell_price = price * (1 - config.slippage_rate)
+    krw_return = btc_balance * sell_price
+    fee = krw_return * config.fee_rate
+    krw_return -= fee
+    pnl = krw_return - (state.entry_volume * state.entry_price)
+
     state.total_pnl += pnl
     state.position = "none"
-    state.paper_btc = 0
 
-    await _record_trade("live", config.market, "sell", price, btc_balance, config.strategy, pnl)
+    logger.info("Live SELL: price=%.0f (with slippage), pnl=%.0f KRW", sell_price, pnl)
+    await _record_trade("live", config.market, "sell", sell_price, btc_balance, config.strategy, pnl)
     return True
 
 
@@ -199,50 +214,45 @@ async def _rebalance_check(config: BotConfig):
         from concurrent.futures import ThreadPoolExecutor
 
         loop = asyncio.get_event_loop()
-        executor = ThreadPoolExecutor(max_workers=6)
 
-        df = await loop.run_in_executor(
-            executor, lambda: download_history(config.market, config.interval, days=3)
-        )
-        if df is None or df.empty or len(df) < 60:
-            executor.shutdown(wait=False)
-            return
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            df = await loop.run_in_executor(
+                executor, lambda: download_history(config.market, config.interval, days=3)
+            )
+            if df is None or df.empty or len(df) < 60:
+                return
 
-        def score_combo(strategy, params):
-            try:
-                result = run_backtest_on_df(
-                    df, strategy, params,
-                    order_ratio=config.order_ratio,
-                    stop_loss=config.stop_loss,
-                    take_profit=config.take_profit,
-                )
-                return score_result(result.get("summary", {}))
-            except Exception:
-                return -999.0
+            def score_combo(strategy, params):
+                try:
+                    result = run_backtest_on_df(
+                        df, strategy, params,
+                        order_ratio=config.order_ratio,
+                        stop_loss=config.stop_loss,
+                        take_profit=config.take_profit,
+                    )
+                    return score_result(result.get("summary", {}))
+                except Exception:
+                    return -999.0
 
-        tasks = [
-            loop.run_in_executor(executor, score_combo, s, p)
-            for s, p in PARAM_GRID
-        ]
-        scores = await asyncio.gather(*tasks, return_exceptions=True)
+            tasks = [
+                loop.run_in_executor(executor, score_combo, s, p)
+                for s, p in PARAM_GRID
+            ]
+            scores = await asyncio.gather(*tasks, return_exceptions=True)
 
-        valid_scores = [
-            (i, s) for i, s in enumerate(scores)
-            if not isinstance(s, Exception) and s > -999
-        ]
-        if not valid_scores:
-            executor.shutdown(wait=False)
-            return
+            valid_scores = [
+                (i, s) for i, s in enumerate(scores)
+                if not isinstance(s, Exception) and s > -999
+            ]
+            if not valid_scores:
+                return
 
-        best_idx, best_score = max(valid_scores, key=lambda x: x[1])
-        best_strategy, best_params = PARAM_GRID[best_idx]
+            best_idx, best_score = max(valid_scores, key=lambda x: x[1])
+            best_strategy, best_params = PARAM_GRID[best_idx]
 
-        # 현재 전략 스코어
-        current_score = await loop.run_in_executor(
-            executor, score_combo, config.strategy, config.params
-        )
-
-        executor.shutdown(wait=False)
+            current_score = await loop.run_in_executor(
+                executor, score_combo, config.strategy, config.params
+            )
 
         # 현재 전략보다 threshold 이상 높은 경우 전환
         should_switch = False
@@ -252,20 +262,21 @@ async def _rebalance_check(config: BotConfig):
             should_switch = True
 
         if should_switch and (best_strategy != config.strategy or best_params != config.params):
+            logger.info("Rebalance: switching %s→%s", config.strategy, best_strategy)
             config.strategy = best_strategy
             config.params = best_params
             state.last_rebalanced = datetime.now().strftime("%H:%M:%S")
             state.rebalance_count += 1
 
-    except Exception:
-        pass  # 재조정 실패가 메인 루프에 영향 없도록
+    except Exception as e:
+        logger.warning("Rebalance check failed: %s", e)
 
 
 async def _bot_loop(config: BotConfig):
     state = _bot_state
     state.running = True
 
-    # paper 모드: budget 기준으로 시작 (DB 잔고는 무시하고 항상 지정 예산으로 초기화)
+    # paper 모드: budget 기준으로 시작
     if config.mode == "paper":
         state.paper_krw = config.budget
         state.paper_btc = 0.0
@@ -274,6 +285,8 @@ async def _bot_loop(config: BotConfig):
         "1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600
     }.get(config.interval, 60)
     interval_seconds = config.execution_interval_seconds if config.execution_interval_seconds > 0 else candle_seconds
+
+    logger.info("Bot started: market=%s interval=%s strategy=%s mode=%s", config.market, config.interval, config.strategy, config.mode)
 
     while state.running:
         try:
@@ -326,17 +339,14 @@ async def _bot_loop(config: BotConfig):
                 else:
                     await _live_sell(config, price)
 
-            # Save paper portfolio state
+            # Save paper portfolio state - 영속 커넥션 사용
             if config.mode == "paper":
-                db = await get_db()
-                try:
-                    await db.execute(
-                        "UPDATE paper_portfolio SET krw_balance=?, btc_balance=?, updated_at=CURRENT_TIMESTAMP WHERE id=1",
-                        (state.paper_krw, state.paper_btc)
-                    )
-                    await db.commit()
-                finally:
-                    await db.close()
+                db = await get_persistent_db()
+                await db.execute(
+                    "UPDATE paper_portfolio SET krw_balance=?, btc_balance=?, updated_at=CURRENT_TIMESTAMP WHERE id=1",
+                    (state.paper_krw, state.paper_btc)
+                )
+                await db.commit()
 
             # 자동 재조정 체크
             if config.auto_rebalance:
@@ -348,11 +358,13 @@ async def _bot_loop(config: BotConfig):
         except asyncio.CancelledError:
             break
         except Exception as e:
+            logger.error("Bot loop error: %s", e, exc_info=True)
             state.last_signal_reason = f"Error: {str(e)}"
 
         await asyncio.sleep(interval_seconds)
 
     state.running = False
+    logger.info("Bot stopped")
 
 
 async def start_bot(config_dict: dict) -> dict:

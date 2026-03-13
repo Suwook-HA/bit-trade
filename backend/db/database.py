@@ -1,11 +1,35 @@
 import aiosqlite
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "trading.db")
 
+# 봇 루프 전용 영속 커넥션 (매 사이클마다 열고 닫지 않음)
+_persistent_conn: aiosqlite.Connection | None = None
+
 
 async def get_db():
+    """요청 핸들러용 - 짧은 수명의 커넥션 반환 (호출자가 close() 책임)"""
     return await aiosqlite.connect(DB_PATH)
+
+
+async def get_persistent_db() -> aiosqlite.Connection:
+    """봇 루프용 - 애플리케이션 수명 내내 유지되는 커넥션 반환"""
+    global _persistent_conn
+    if _persistent_conn is None:
+        _persistent_conn = await aiosqlite.connect(DB_PATH)
+        logger.info("Persistent DB connection opened")
+    return _persistent_conn
+
+
+async def close_persistent_db():
+    global _persistent_conn
+    if _persistent_conn is not None:
+        await _persistent_conn.close()
+        _persistent_conn = None
+        logger.info("Persistent DB connection closed")
 
 
 async def init_db():

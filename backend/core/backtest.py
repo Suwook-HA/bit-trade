@@ -159,7 +159,17 @@ def run_backtest_on_df(
 
     if len(equity_values) > 1:
         returns = np.diff(equity_values) / equity_values[:-1]
-        sharpe = float(returns.mean() / returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
+        if returns.std() > 0:
+            # 캔들 간격에서 연간 캔들 수를 역산하여 올바른 annualization factor 적용
+            # (252일 기준이 아니라 실제 타임프레임 기준)
+            if len(df) > 1:
+                avg_seconds = (df.index[-1] - df.index[0]).total_seconds() / (len(df) - 1)
+                candles_per_year = 365 * 24 * 3600 / max(avg_seconds, 1)
+            else:
+                candles_per_year = 252 * 24 * 60  # fallback: 1분봉 기준
+            sharpe = float(returns.mean() / returns.std() * np.sqrt(candles_per_year))
+        else:
+            sharpe = 0
     else:
         sharpe = 0
 
