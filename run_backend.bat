@@ -1,3 +1,3 @@
 @echo off
-C:\Users\etri\anaconda3\python.exe "%~dp0start_backend.py"
+C:\Users\admin\anaconda3\python.exe "%~dp0start_backend.py"
 pause
