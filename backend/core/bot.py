@@ -340,8 +340,17 @@ async def _execute_signal(
     volume_filter: bool = True,
 ) -> None:
     if signal_action == "buy" and state.position == "none":
-        total_portfolio = state.paper_krw + state.paper_asset * price
-        invest_krw = state.paper_krw * config.order_ratio
+        if config.mode == "paper":
+            available_krw = state.paper_krw
+            asset_value = state.paper_asset * price
+            invest_krw = available_krw * config.order_ratio
+        else:
+            available_krw = get_balance("KRW")
+            asset_currency = config.market.split("-")[1]
+            asset_value = get_balance(asset_currency) * price
+            invest_krw = min(available_krw * config.order_ratio, config.budget * config.order_ratio)
+
+        total_portfolio = available_krw + asset_value
         active_pos = sum(1 for s in _bot_states.values() if s.position == "long")
         allowed, reason = risk.check_order_allowed(
             mode=config.mode, side="buy", market=config.market,

@@ -85,6 +85,16 @@ class TestCheckOrderAllowed:
 
 # ─── 일일 손실 한도 ──────────────────────────────────────────────────
 
+    def test_default_config_allows_half_budget_order(self, engine):
+        engine.initialize_session("paper", 1_000_000)
+        allowed, reason = engine.check_order_allowed(
+            mode="paper", side="buy", market="KRW-BTC",
+            invest_krw=500_000, total_portfolio_krw=1_000_000,
+            active_position_count=0,
+        )
+        assert allowed, f"湲곕낯 二쇰Ц 鍮꾩쑉(50%)???李⑤떒?섎㈃ ?덈맖: {reason}"
+
+
 class TestDailyLossLimit:
 
     def test_daily_loss_exceeded_blocks_buy(self, strict_engine):

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RiskConfig:
     max_daily_loss_pct: float = 0.05          # 일일 손실 한도 (포트폴리오 대비 %)
-    max_position_weight: float = 0.40          # 종목별 최대 비중
+    max_position_weight: float = 1.00          # 종목별 최대 비중
     max_consecutive_losses: int = 5            # 연속 손실 허용 횟수
     max_simultaneous_positions: int = 4        # 최대 동시 포지션 수
     circuit_breaker_enabled: bool = True       # circuit breaker 활성화
@@ -180,7 +180,7 @@ class RiskEngine:
 # ─── 스캘핑 전용 RiskConfig 프리셋 ──────────────────────────────
 SCALPING_RISK_CONFIG = RiskConfig(
     max_daily_loss_pct=0.02,           # 일일 손실 한도 2%
-    max_position_weight=0.30,
+    max_position_weight=0.50,
     max_consecutive_losses=3,          # 연속 3회 손절 시 중단
     max_simultaneous_positions=2,
     circuit_breaker_enabled=True,
