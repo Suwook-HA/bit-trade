@@ -148,15 +148,62 @@ def compute_ma_cross_signal(
     return Signal("hold", f"MA{short_period}={short_cur:.0f}, MA{long_period}={long_cur:.0f}", price, indicators)
 
 
+def compute_vwap_signal(
+    df: pd.DataFrame,
+    deviation: float = 0.003,   # VWAP 대비 ± 0.3% 이탈 시 진입
+    period: int = 20,           # 롤링 VWAP 산출 기간 (봉 수)
+) -> Signal:
+    """롤링 VWAP 이탈 스캘핑 전략.
+
+    - 종가가 VWAP 아래로 deviation 이상 이탈 → 매수
+    - 종가가 VWAP 위로 deviation 이상 이탈 → 매도
+    """
+    if len(df) < period or "volume" not in df.columns:
+        return Signal("hold", "Not enough data for VWAP", df["close"].iloc[-1], {})
+
+    tail = df.tail(period).copy()
+    typical = (tail["high"] + tail["low"] + tail["close"]) / 3
+    vol_sum = tail["volume"].sum()
+    if vol_sum <= 0:
+        return Signal("hold", "Zero volume for VWAP", df["close"].iloc[-1], {})
+
+    vwap_val = (typical * tail["volume"]).sum() / vol_sum
+    price = float(df["close"].iloc[-1])
+    deviation_pct = (price - vwap_val) / vwap_val
+
+    indicators = {
+        "vwap": round(vwap_val, 0),
+        "deviation_pct": round(deviation_pct * 100, 3),
+    }
+
+    if deviation_pct <= -deviation:
+        return Signal(
+            "buy",
+            f"Price {deviation_pct*100:.2f}% below VWAP {vwap_val:.0f}",
+            price, indicators,
+        )
+    if deviation_pct >= deviation:
+        return Signal(
+            "sell",
+            f"Price {deviation_pct*100:.2f}% above VWAP {vwap_val:.0f}",
+            price, indicators,
+        )
+    return Signal("hold", f"Within VWAP band ({deviation_pct*100:+.2f}%)", price, indicators)
+
+
 STRATEGY_MAP = {
     "rsi": compute_rsi_signal,
     "macd": compute_macd_signal,
     "bollinger": compute_bollinger_signal,
     "ma_cross": compute_ma_cross_signal,
+    "vwap": compute_vwap_signal,
 }
 
 
 def get_signal(strategy: str, df: pd.DataFrame, params: dict, volume_filter: bool = True) -> Signal:
+    # VWAP 전략은 자체 볼륨 로직 사용 — 외부 볼륨 필터 비적용
+    if strategy == "vwap":
+        volume_filter = False
     func = STRATEGY_MAP.get(strategy)
     if func is None:
         return Signal("hold", "Unknown strategy", df["close"].iloc[-1] if not df.empty else 0, {})
