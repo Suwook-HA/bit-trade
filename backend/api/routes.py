@@ -18,6 +18,29 @@ _VALID_MODES = {"paper", "live"}
 _SCALPING_INTERVALS = {"5s", "10s", "15s", "30s"}
 
 
+def _build_seeded_trade(paper: dict, market: str, mode: str) -> Optional[dict]:
+    if not paper or paper.get("position") != "long":
+        return None
+
+    entry_price = paper.get("entry_price") or 0
+    asset = paper.get("asset") or paper.get("btc") or 0
+    if entry_price <= 0 or asset <= 0:
+        return None
+
+    return {
+        "side": "buy",
+        "price": entry_price,
+        "volume": asset,
+        "pnl": None,
+        "created_at": paper.get("updated_at"),
+        "strategy": "warmup_seed",
+        "mode": mode,
+        "market": market,
+        "status": "seeded",
+        "synthetic": True,
+    }
+
+
 # ─── Candles ────────────────────────────────────────────────────
 
 @router.get("/candles/{market}")
@@ -289,17 +312,26 @@ async def portfolio(
         # 최근 거래 내역
         cursor3 = await db.execute(
             "SELECT side, price, volume, pnl, created_at, strategy, mode FROM trades "
-            "ORDER BY created_at DESC LIMIT 50"
+            "WHERE mode=? AND market=? "
+            "ORDER BY created_at DESC LIMIT 50",
+            (target_mode, target_market),
         )
         rows = await cursor3.fetchall()
         trades = [
             {"side": r[0], "price": r[1], "volume": r[2], "pnl": r[3],
-             "created_at": r[4], "strategy": r[5], "mode": r[6]}
+             "created_at": r[4], "strategy": r[5], "mode": r[6], "market": target_market}
             for r in rows
         ]
+        if not trades:
+            seeded_trade = _build_seeded_trade(paper, target_market, target_mode)
+            if seeded_trade:
+                trades = [seeded_trade]
 
         # P&L 집계
-        cursor4 = await db.execute("SELECT pnl FROM trades WHERE side='sell' AND pnl IS NOT NULL")
+        cursor4 = await db.execute(
+            "SELECT pnl FROM trades WHERE mode=? AND market=? AND side='sell' AND pnl IS NOT NULL",
+            (target_mode, target_market),
+        )
         pnl_rows = await cursor4.fetchall()
         pnl_values = [r[0] for r in pnl_rows if r[0] is not None]
         total_pnl = sum(pnl_values)

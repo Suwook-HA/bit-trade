@@ -119,7 +119,12 @@ export default function Portfolio() {
                   <span style={{ fontSize: '10px', color: '#3f3f46', background: '#27272a', padding: '1px 5px', borderRadius: '3px' }}>
                     {t.mode === 'paper' ? '모의' : '실거래'}
                   </span>
-                  {t.strategy && (
+                  {t.synthetic && (
+                    <span style={{ fontSize: '10px', color: '#60a5fa', background: 'rgba(96,165,250,0.1)', padding: '1px 5px', borderRadius: '3px' }}>
+                      시작 복원
+                    </span>
+                  )}
+                  {t.strategy && !t.synthetic && (
                     <span style={{ fontSize: '10px', color: '#52525b' }}>{t.strategy}</span>
                   )}
                 </div>
