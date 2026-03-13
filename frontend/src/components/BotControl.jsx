@@ -22,6 +22,12 @@ const DEFAULT_PARAMS = {
   ma_cross: { short_period: 5, long_period: 20 },
   vwap: { deviation: 0.003, period: 20 },
 }
+const SCALPING_PARAMS = {
+  rsi: { period: 7, oversold: 25, overbought: 65 },
+  macd: { fast: 5, slow: 13, signal: 5 },
+  bollinger: { period: 10, std_dev: 1.5 },
+  ma_cross: { short_period: 3, long_period: 10 },
+}
 const STRATEGY_LABELS = { rsi: 'RSI', macd: 'MACD', bollinger: '볼린저 밴드', ma_cross: 'MA 크로스', vwap: 'VWAP' }
 const SCALPING_INTERVALS = ['5s', '10s', '15s', '30s']
 const CONDITION_META = {
@@ -34,6 +40,23 @@ const CONDITION_META = {
 
 const label = { fontSize: '11px', color: '#71717a', marginBottom: '4px', display: 'block', fontWeight: 500 }
 const MAX_ORDER_RATIO = 0.4
+const RECOMMENDATION_LOOKBACK_DAYS = 3
+const SCALPING_PRESET = {
+  market: 'KRW-BTC',
+  strategy: 'macd',
+  params: SCALPING_PARAMS.macd,
+  botInterval: '1m',
+  mode: 'paper',
+  orderRatio: 0.3,
+  stopLoss: 1.2,
+  takeProfit: 2.0,
+  autoRebalance: true,
+  autoStrategy: true,
+  execInterval: 10,
+  budget: 1000000,
+  trailingStop: true,
+  trailingStopPct: 0.8,
+}
 const row2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
 const divider = { borderTop: '1px solid #27272a', margin: '12px 0' }
 
@@ -57,7 +80,7 @@ function RecommendationPanel({ data, onApply }) {
 
       {/* 추천 카드 */}
       {data.recommendations.map((rec, i) => {
-        const m = rec.metrics
+        const m = rec.metrics?.oos || {}
         return (
           <div key={i} style={{
             background: '#09090b', border: '1px solid #27272a',
@@ -76,9 +99,9 @@ function RecommendationPanel({ data, onApply }) {
             </div>
             <div style={{ display: 'flex', gap: '5px', marginBottom: '8px' }}>
               {[
-                { lbl: '수익률', val: `${m.total_return_pct >= 0 ? '+' : ''}${m.total_return_pct}%`, col: m.total_return_pct >= 0 ? '#34d399' : '#f87171' },
-                { lbl: '샤프',   val: m.sharpe_ratio.toFixed(2), col: '#60a5fa' },
-                { lbl: '승률',   val: `${m.win_rate_pct}%`,      col: '#a78bfa' },
+                { lbl: '수익률', val: `${(m.total_return_pct ?? 0) >= 0 ? '+' : ''}${m.total_return_pct ?? 0}%`, col: (m.total_return_pct ?? 0) >= 0 ? '#34d399' : '#f87171' },
+                { lbl: '샤프',   val: (m.sharpe_ratio ?? 0).toFixed(2), col: '#60a5fa' },
+                { lbl: '승률',   val: `${m.win_rate_pct ?? 0}%`,      col: '#a78bfa' },
               ].map(({ lbl: l, val, col }) => (
                 <div key={l} style={{ flex: 1, background: '#18181b', borderRadius: '4px', padding: '4px 6px', textAlign: 'center' }}>
                   <div style={{ fontSize: '9px', color: '#52525b' }}>{l}</div>
@@ -185,20 +208,20 @@ function RunningStatus({ status }) {
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────
 export default function BotControl() {
-  const [market, setMarket] = useState('KRW-BTC')
-  const [strategy, setStrategy] = useState('rsi')
-  const [params, setParams] = useState(DEFAULT_PARAMS.rsi)
-  const [botInterval, setBotInterval] = useState('1m')
-  const [mode, setMode] = useState('paper')
-  const [orderRatio, setOrderRatio] = useState(0.3)
-  const [stopLoss, setStopLoss] = useState(3)
-  const [takeProfit, setTakeProfit] = useState(5)
-  const [autoRebalance, setAutoRebalance] = useState(false)
-  const [autoStrategy, setAutoStrategy] = useState(false)
-  const [execInterval, setExecInterval] = useState(0)
-  const [budget, setBudget] = useState(1000000)
-  const [trailingStop, setTrailingStop] = useState(false)
-  const [trailingStopPct, setTrailingStopPct] = useState(2)
+  const [market, setMarket] = useState(SCALPING_PRESET.market)
+  const [strategy, setStrategy] = useState(SCALPING_PRESET.strategy)
+  const [params, setParams] = useState(SCALPING_PRESET.params)
+  const [botInterval, setBotInterval] = useState(SCALPING_PRESET.botInterval)
+  const [mode, setMode] = useState(SCALPING_PRESET.mode)
+  const [orderRatio, setOrderRatio] = useState(SCALPING_PRESET.orderRatio)
+  const [stopLoss, setStopLoss] = useState(SCALPING_PRESET.stopLoss)
+  const [takeProfit, setTakeProfit] = useState(SCALPING_PRESET.takeProfit)
+  const [autoRebalance, setAutoRebalance] = useState(SCALPING_PRESET.autoRebalance)
+  const [autoStrategy, setAutoStrategy] = useState(SCALPING_PRESET.autoStrategy)
+  const [execInterval, setExecInterval] = useState(SCALPING_PRESET.execInterval)
+  const [budget, setBudget] = useState(SCALPING_PRESET.budget)
+  const [trailingStop, setTrailingStop] = useState(SCALPING_PRESET.trailingStop)
+  const [trailingStopPct, setTrailingStopPct] = useState(SCALPING_PRESET.trailingStopPct)
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [startError, setStartError] = useState(null)
@@ -208,6 +231,7 @@ export default function BotControl() {
   const pollRef = useRef(null)
 
   const isScalping = SCALPING_INTERVALS.includes(botInterval)
+  const recommendationRequestRef = useRef(0)
 
   useEffect(() => { setParams(DEFAULT_PARAMS[strategy]) }, [strategy])
 
@@ -228,6 +252,55 @@ export default function BotControl() {
     pollRef.current = setInterval(load, 2000)
     return () => clearInterval(pollRef.current)
   }, [])
+
+  const applyRecommendation = (recStrategy, recParams) => {
+    setStrategy(recStrategy)
+    setParams(recParams)
+  }
+
+  const selectStrategy = nextStrategy => {
+    setStrategy(nextStrategy)
+    setParams(SCALPING_PARAMS[nextStrategy])
+  }
+
+  const loadRecommendation = async ({ autoApply = true } = {}) => {
+    const requestId = recommendationRequestRef.current + 1
+    recommendationRequestRef.current = requestId
+    setRecLoading(true)
+    setRecError(null)
+
+    try {
+      const data = await getRecommendation({
+        market,
+        interval: botInterval,
+        days: RECOMMENDATION_LOOKBACK_DAYS,
+      })
+
+      if (recommendationRequestRef.current !== requestId) return null
+      if (data.error) throw new Error(data.error)
+
+      setRecommendations(data)
+      if (autoApply && data.recommendations?.length) {
+        const best = data.recommendations[0]
+        applyRecommendation(best.strategy, best.params)
+      }
+      return data
+    } catch (e) {
+      if (recommendationRequestRef.current === requestId) {
+        setRecError('추천 실패: ' + (e.response?.data?.detail || e.message))
+      }
+      return null
+    } finally {
+      if (recommendationRequestRef.current === requestId) {
+        setRecLoading(false)
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!autoStrategy) return
+    loadRecommendation()
+  }, [market, botInterval, autoStrategy])
 
   const handleStart = async () => {
     setLoading(true)
@@ -253,22 +326,7 @@ export default function BotControl() {
   }
 
   const handleRecommend = async () => {
-    setRecLoading(true)
-    setRecError(null)
-    try {
-      const data = await getRecommendation({ market, interval: botInterval, days: 7 })
-      if (data.error) throw new Error(data.error)
-      setRecommendations(data)
-    } catch (e) {
-      setRecError('추천 실패: ' + (e.response?.data?.detail || e.message))
-    } finally {
-      setRecLoading(false)
-    }
-  }
-
-  const applyRecommendation = (rec_strategy, rec_params) => {
-    setStrategy(rec_strategy)
-    setParams(rec_params)
+    await loadRecommendation()
   }
 
   const updateParam = (key, val) => setParams(p => ({ ...p, [key]: isNaN(Number(val)) ? val : Number(val) }))
@@ -311,7 +369,8 @@ export default function BotControl() {
                   자동 전략 선택
                 </label>
                 <div style={{ fontSize: '10px', color: '#52525b', lineHeight: 1.5 }}>
-                  봇 시작 시 백테스트(54개 조합)로 최적 전략과 파라미터를 자동 선택합니다.<br />
+                  기본값은 스캘핑 기준(1분봉 / 10초 실행 / 짧은 손절·익절)으로 맞춰집니다.<br />
+                  봇 시작 전 최근 {RECOMMENDATION_LOOKBACK_DAYS}일 기준 추천 전략을 자동 반영합니다.<br />
                   OFF이면 아래에서 직접 선택하세요.
                 </div>
               </div>
@@ -320,7 +379,7 @@ export default function BotControl() {
             {!autoStrategy && (<>
               <div>
                 <label style={label}>전략</label>
-                <select className="select-field" value={strategy} onChange={e => setStrategy(e.target.value)}>
+                <select className="select-field" value={strategy} onChange={e => selectStrategy(e.target.value)}>
                   {STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
@@ -458,7 +517,7 @@ export default function BotControl() {
                 onChange={e => setOrderRatio(Number(e.target.value))}
                 style={{ width: '100%', accentColor: '#3b82f6' }} />
               <div style={{ fontSize: '10px', color: '#52525b', marginTop: '4px' }}>
-                Risk limit: position size max 40%.
+                스캘핑 기본값은 리스크 제한에 맞춰 최대 40%까지만 사용합니다.
               </div>
             </div>
 
@@ -508,7 +567,7 @@ export default function BotControl() {
                 color: recLoading ? '#52525b' : '#a1a1aa', fontSize: '12px',
                 fontWeight: 600, cursor: recLoading ? 'not-allowed' : 'pointer',
               }}>
-              {recLoading ? '⏳ 전략 분석 중... (39개 조합)' : '🔍 최적 전략 추천 받기'}
+              {recLoading ? '⏳ 스캘핑 전략 분석 중...' : '🔍 스캘핑 추천 전략 새로 받기'}
             </button>
 
             {recError && (
