@@ -22,11 +22,13 @@
 - 1m / 3m / 5m / 15m / 1h / 1d 타임프레임
 - 이동평균선 (MA 5/20/60) · 볼린저밴드 오버레이
 - WebSocket 실시간 현재가 업데이트
+- WebSocket 실시간 캔들 업데이트 (`/ws/candle`)
+- 마켓 선택 지원 (KRW-BTC / KRW-ETH / KRW-SOL / KRW-XRP)
 
 ### 🤖 자동매매 봇
 - **전략**: RSI 과매수/과매도 · MACD · 볼린저밴드 · MA 크로스
 - **모드**: 모의투자(페이퍼) / 실거래
-- **자동 전략 선택**: 봇 시작 시 54개 조합 백테스트로 최적 전략 자동 세팅
+- **자동 전략 선택**: 봇 시작 시 39개 조합 백테스트로 최적 전략 자동 세팅
 - 손절(Stop Loss) · 익절(Take Profit) · 추적손절(Trailing Stop) 설정
 - 투자 한도 지정 (사용자가 설정한 금액 내에서만 투자)
 - 투자 비율 슬라이더 (한도의 10~100%)
@@ -35,15 +37,18 @@
 - 수수료(0.05%) · 슬리피지(0.02%) 자동 반영
 - 거래량 확인 필터 (저거래량 허위 신호 제거)
 - 실시간 포지션 · 손익 · 시그널 로그
+- 매수/매도 시 슬리피지(0.02%) · 수수료(0.05%) 정확 반영
+- API 키 인증 지원 (`X-API-Key` 헤더, `.env`의 `APP_API_KEY`)
 
 ### 📊 백테스팅
 - 전략별 과거 데이터 시뮬레이션
 - 총 수익률 · 승률 · MDD · Sharpe Ratio · 자산 곡선
+- Sharpe Ratio 연환산 계수를 캔들 인터벌 기준으로 정확 계산
 - 추적손절 포함 시뮬레이션
 - 수수료 · 슬리피지 실제 반영
 
 ### 🔍 전략 추천 (그리드 서치)
-- 54개 전략×파라미터 조합 병렬 백테스트
+- 39개 전략×파라미터 조합 병렬 백테스트
 - 단타 최적화 파라미터 포함 (RSI 7/9, MACD 5/13/5, 볼린저 10봉 등)
 - 시장 상태 분석 (상승추세 / 하락추세 / 횡보 / 고변동성)
 - 상위 3개 전략 추천 + 한 번에 적용
@@ -81,8 +86,10 @@ npm install
 ```
 UPBIT_ACCESS_KEY=발급받은_액세스키
 UPBIT_SECRET_KEY=발급받은_시크릿키
+APP_API_KEY=임의의_강력한_키  # 봇 시작/중지 API 보호 (선택사항)
 ```
 > 모의투자만 사용할 경우 `.env` 없이도 동작합니다.
+> `APP_API_KEY`를 설정하면 `/api/bot/start`, `/api/bot/stop` 엔드포인트에 인증이 활성화됩니다.
 
 ### 3. 서버 실행
 
@@ -93,7 +100,8 @@ python start_backend.py
 
 **터미널 2 — 프론트엔드 (포트 5173)**
 ```bash
-node frontend/node_modules/vite/bin/vite.js frontend --port 5173 --config frontend/vite.config.js
+cd frontend
+npm run dev
 ```
 
 ### 4. 접속
@@ -119,7 +127,8 @@ Trading/
 │   │   ├── strategies.py   # 매매 전략 (거래량 필터 포함)
 │   │   ├── bot.py          # 자동매매 봇 엔진
 │   │   ├── backtest.py     # 백테스팅 엔진
-│   │   └── recommender.py  # 그리드 서치 · 전략 자동 추천
+│   │   ├── recommender.py  # 그리드 서치 · 전략 자동 추천
+│   │   └── auth.py         # API 키 인증 (X-API-Key)
 │   ├── api/
 │   │   ├── routes.py       # REST 엔드포인트
 │   │   └── ws_handler.py   # WebSocket 핸들러
@@ -129,10 +138,13 @@ Trading/
 └── frontend/
     └── src/
         ├── App.jsx
+        ├── services/
+        │   ├── api.js          # axios 인스턴스 (X-API-Key 헤더 포함)
+        │   └── websocket.js    # Ticker · Candle WebSocket 팩토리
         └── components/
             ├── Chart.jsx       # 실시간 캔들 차트
             ├── Ticker.jsx      # 현재가
-            ├── BotControl.jsx  # 봇 제어 UI
+            ├── BotControl.jsx  # 봇 제어 UI (마켓 선택 포함)
             ├── Portfolio.jsx   # 포트폴리오
             └── Backtest.jsx    # 백테스팅 UI
 ```
@@ -152,7 +164,8 @@ Trading/
 | POST | `/api/backtest` | 백테스트 실행 |
 | POST | `/api/strategy/recommend` | 전략 자동 추천 (그리드 서치) |
 | GET | `/api/portfolio` | 포트폴리오 · 손익 분석 조회 |
-| WS | `/ws/ticker` | 실시간 현재가 |
+| WS | `/ws/ticker?market=KRW-BTC` | 실시간 현재가 |
+| WS | `/ws/candle?market=KRW-BTC` | 실시간 캔들 업데이트 |
 
 ---
 
