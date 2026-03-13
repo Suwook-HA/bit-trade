@@ -25,7 +25,7 @@ class BotConfig:
     params: dict = field(default_factory=lambda: {"period": 14, "oversold": 30, "overbought": 70})
     mode: str = "paper"          # 'paper' | 'live'
     budget: float = 1000000      # KRW
-    order_ratio: float = 0.5     # 예산의 몇 % 투자
+    order_ratio: float = 0.3     # 예산의 몇 % 투자
     stop_loss: float = 0.03      # 손절 3%
     take_profit: float = 0.05    # 익절 5%
     auto_rebalance: bool = False
@@ -62,6 +62,51 @@ class BotState:
 _bot_configs: Dict[str, BotConfig] = {}   # key: market
 _bot_states:  Dict[str, BotState]  = {}
 _bot_tasks:   Dict[str, asyncio.Task] = {}
+
+
+def _validate_order_ratio(order_ratio: float) -> Optional[str]:
+    if not 0 < order_ratio <= 1:
+        return "order_ratio must be between 0 and 1"
+
+    max_weight = get_risk_engine().config.max_position_weight
+    if order_ratio > max_weight:
+        return (
+            f"order_ratio {order_ratio:.2f} exceeds risk max_position_weight "
+            f"{max_weight:.2f}; lower the order ratio to {max_weight:.2f} or less"
+        )
+
+    return None
+
+
+def _get_signal_df(df):
+    """Use only closed candles when computing live signals."""
+    if df is None or df.empty:
+        return df
+    if len(df) < 2:
+        return df.iloc[0:0].copy()
+    return df.iloc[:-1].copy()
+
+
+def _get_risk_context(config: BotConfig, state: BotState, price: float) -> tuple[float, float]:
+    if config.mode == "live":
+        currency = config.market.split("-")[1]
+        krw_balance = get_balance("KRW")
+        asset_balance = get_balance(currency)
+        total_portfolio = krw_balance + asset_balance * price
+        invest_krw = min(krw_balance * config.order_ratio, config.budget * config.order_ratio)
+        return total_portfolio, invest_krw
+
+    total_portfolio = state.paper_krw + state.paper_asset * price
+    invest_krw = min(state.paper_krw * config.order_ratio, config.budget * config.order_ratio)
+    return total_portfolio, invest_krw
+
+
+def _count_active_positions(mode: str) -> int:
+    return sum(
+        1
+        for market, state in _bot_states.items()
+        if state.position == "long" and _bot_configs.get(market) and _bot_configs[market].mode == mode
+    )
 
 
 def get_bot_status(market: Optional[str] = None) -> dict:
@@ -134,7 +179,7 @@ async def _record_trade(
 
 
 async def _paper_buy(config: BotConfig, state: BotState, price: float) -> bool:
-    invest_krw = state.paper_krw * config.order_ratio
+    invest_krw = min(state.paper_krw * config.order_ratio, config.budget * config.order_ratio)
     if invest_krw < 5000:
         return False
 
@@ -488,15 +533,19 @@ async def _bot_loop(config: BotConfig, state: BotState):
     while state.running:
         try:
             df = get_candles_df(config.market, config.interval, count=100)
-            if df.empty:
+            signal_df = _get_signal_df(df)
+            if signal_df is None or signal_df.empty:
                 await asyncio.sleep(interval_seconds)
                 continue
 
-            signal = get_signal(config.strategy, df, config.params)
+            signal = get_signal(config.strategy, signal_df, config.params)
             state.last_signal = signal.action
             state.last_signal_reason = signal.reason
             state.last_check = datetime.now().strftime("%H:%M:%S")
-            price = signal.price
+
+            ticker = get_ticker(config.market)
+            ticker_price = ticker.get("price") if ticker else None
+            price = float(ticker_price if ticker_price is not None else signal.price)
 
             if state.position == "long" and price > state.peak_price:
                 state.peak_price = price
@@ -538,6 +587,11 @@ async def start_bot(config_dict: dict) -> dict:
         k: v for k, v in config_dict.items()
         if k in BotConfig.__dataclass_fields__
     })
+
+    validation_error = _validate_order_ratio(config.order_ratio)
+    if validation_error:
+        return {"error": validation_error}
+
     state = BotState()
     if config.mode == "paper":
         state.paper_krw = config.budget

@@ -33,6 +33,7 @@ const CONDITION_META = {
 }
 
 const label = { fontSize: '11px', color: '#71717a', marginBottom: '4px', display: 'block', fontWeight: 500 }
+const MAX_ORDER_RATIO = 0.4
 const row2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
 const divider = { borderTop: '1px solid #27272a', margin: '12px 0' }
 
@@ -189,7 +190,7 @@ export default function BotControl() {
   const [params, setParams] = useState(DEFAULT_PARAMS.rsi)
   const [botInterval, setBotInterval] = useState('1m')
   const [mode, setMode] = useState('paper')
-  const [orderRatio, setOrderRatio] = useState(0.5)
+  const [orderRatio, setOrderRatio] = useState(0.3)
   const [stopLoss, setStopLoss] = useState(3)
   const [takeProfit, setTakeProfit] = useState(5)
   const [autoRebalance, setAutoRebalance] = useState(false)
@@ -232,7 +233,7 @@ export default function BotControl() {
     setLoading(true)
     setStartError(null)
     try {
-      await startBot({
+      const result = await startBot({
         market, interval: botInterval, strategy, params, mode,
         budget, order_ratio: orderRatio,
         stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
@@ -243,6 +244,8 @@ export default function BotControl() {
         trailing_stop_pct: trailingStopPct / 100,
         auto_strategy: autoStrategy,
       })
+      if (result?.error) throw new Error(result.error)
+      setStatus(await getBotStatus())
     } catch (e) {
       setStartError('봇 시작 실패: ' + (e.response?.data?.detail || e.message))
     }
@@ -451,9 +454,12 @@ export default function BotControl() {
                 투자 비율 &nbsp;
                 <span style={{ color: '#60a5fa', fontWeight: 700 }}>{Math.round(orderRatio * 100)}%</span>
               </label>
-              <input type="range" min={0.1} max={1} step={0.1} value={orderRatio}
+              <input type="range" min={0.1} max={MAX_ORDER_RATIO} step={0.1} value={orderRatio}
                 onChange={e => setOrderRatio(Number(e.target.value))}
                 style={{ width: '100%', accentColor: '#3b82f6' }} />
+              <div style={{ fontSize: '10px', color: '#52525b', marginTop: '4px' }}>
+                Risk limit: position size max 40%.
+              </div>
             </div>
 
             {/* 자동 재조정 체크박스 */}

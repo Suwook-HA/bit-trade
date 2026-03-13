@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator, model_validator
 from typing import Optional
 
@@ -48,7 +48,7 @@ class BotStartRequest(BaseModel):
     params: Optional[dict] = None   # mutable default 제거
     mode: str = "paper"
     budget: float = 1000000
-    order_ratio: float = 0.5
+    order_ratio: float = 0.3
     stop_loss: float = 0.03
     take_profit: float = 0.05
     auto_rebalance: bool = False
@@ -144,14 +144,20 @@ async def bot_start(req: BotStartRequest):
             best = rec["recommendations"][0]
             config["strategy"] = best["strategy"]
             config["params"] = best["params"]
-    return await start_bot(config)
+    result = await start_bot(config)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @router.post("/bot/stop", dependencies=[Depends(verify_api_key)])
 async def bot_stop(
     market: Optional[str] = Query(None, description="마켓 코드 (예: KRW-BTC). 생략 시 전체 중지")
 ):
-    return await stop_bot(market=market)
+    result = await stop_bot(market=market)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @router.get("/bot/status")
