@@ -14,9 +14,16 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 from core.backtest import download_history, run_backtest_on_df
+from core.strategies import get_signal
 
 # ─── 파라미터 그리드 (단타 최적화 포함) ──────────────────────────
 PARAM_GRID: list[tuple[str, dict]] = []
+SCALPING_HINT_DEFAULTS = {
+    "rsi": {"period": 7, "oversold": 25, "overbought": 65},
+    "macd": {"fast": 5, "slow": 13, "signal": 5},
+    "bollinger": {"period": 10, "std_dev": 1.5},
+    "ma_cross": {"short_period": 3, "long_period": 10},
+}
 
 for _period, _oversold, _overbought in itertools.product([7, 9, 10, 14], [25, 30], [65, 70]):
     PARAM_GRID.append(("rsi", {"period": _period, "oversold": _oversold, "overbought": _overbought}))
@@ -130,6 +137,132 @@ def _extract_metrics(summary: dict) -> dict:
         "total_trades": summary.get("total_trades", 0),
         "mdd_pct": summary.get("mdd_pct", 0),
     }
+
+
+def _selection_score(rec: dict, market_hint: str) -> float:
+    """스캘핑 추천용 정렬 점수. 현재 시장 적합도와 거래 빈도를 함께 반영한다."""
+    train = rec["metrics"]["train"]
+    oos = rec["metrics"]["oos"]
+    live_action = rec.get("live_signal", {}).get("action", "hold")
+    warmup_bonus = 4.0 if rec.get("warmup_position") else 0.0
+    trades = oos.get("total_trades", 0)
+    total_return = oos.get("total_return_pct", 0)
+    win_rate = oos.get("win_rate_pct", 0)
+    live_bonus = 3.0 if live_action == "buy" else (-0.5 if live_action == "sell" else 0.0)
+
+    if trades <= 0:
+        train_trades = train.get("total_trades", 0)
+        train_return = train.get("total_return_pct", 0)
+        market_bonus = 2.0 if rec["strategy"] == market_hint else 0.0
+        train_trade_bonus = min(train_trades, 10) * 0.15
+        return market_bonus + train_trade_bonus + train_return + rec["score"] + live_bonus + warmup_bonus
+
+    market_bonus = 2.0 if rec["strategy"] == market_hint else 0.0
+    profit_bonus = 1.5 if total_return > 0 else 0.0
+    trade_bonus = min(trades, 10) * 0.2
+    win_bonus = win_rate / 100
+
+    return rec["oos_score"] + market_bonus + profit_bonus + trade_bonus + win_bonus + live_bonus + warmup_bonus
+
+
+def _select_top_recommendations(scored: list[dict], market_info: dict, top_n: int) -> list[dict]:
+    """거래 가능한 조합을 우선 추천하고, 없을 때만 제한적으로 fallback 한다."""
+    market_hint = market_info.get("best_strategy_hint", "")
+    tradable = [rec for rec in scored if rec["metrics"]["oos"].get("total_trades", 0) > 0]
+    if tradable:
+        pool = tradable
+    else:
+        warm_positions = [rec for rec in scored if rec.get("warmup_position")]
+        if warm_positions:
+            pool = warm_positions
+        else:
+            live_buy = [rec for rec in scored if rec.get("live_signal", {}).get("action") == "buy"]
+            if live_buy:
+                pool = live_buy
+            else:
+                hinted = [rec for rec in scored if rec["strategy"] == market_hint]
+                pool = hinted if hinted else scored
+
+    ranked = []
+    for rec in pool:
+        ranked_rec = dict(rec)
+        ranked_rec["selection_score"] = round(_selection_score(rec, market_hint), 4)
+        ranked.append(ranked_rec)
+
+    ranked.sort(
+        key=lambda rec: (
+            rec["selection_score"],
+            rec["metrics"]["oos"].get("total_trades", 0),
+            rec["metrics"]["oos"].get("total_return_pct", 0),
+            rec["score"],
+        ),
+        reverse=True,
+    )
+    return ranked[:top_n]
+
+
+def _build_market_hint_fallback(scored: list[dict], market_info: dict) -> dict | None:
+    """OOS 거래가 모두 0건일 때 현재 시장 상태에 맞는 스캘핑 프리셋을 반환한다."""
+    strategy = market_info.get("best_strategy_hint")
+    params = SCALPING_HINT_DEFAULTS.get(strategy)
+    if not strategy or not params:
+        return None
+
+    for rec in scored:
+        if rec["strategy"] == strategy and rec["params"] == params:
+            fallback = dict(rec)
+            fallback["selection_score"] = round(max(rec.get("selection_score", 0), 0.0), 4)
+            fallback["fallback"] = True
+            return fallback
+
+    return {
+        "strategy": strategy,
+        "params": params,
+        "score": 0.0,
+        "oos_score": 0.0,
+        "selection_score": 0.0,
+        "fallback": True,
+        "warmup_position": False,
+        "overfit_info": {
+            "overfit": False,
+            "train_score": 0.0,
+            "test_score": 0.0,
+            "degradation_pct": 0.0,
+            "reason": "시장 상태 기반 fallback",
+        },
+        "metrics": {
+            "train": _extract_metrics({}),
+            "oos": _extract_metrics({}),
+        },
+    }
+
+
+def _has_warmup_position(
+    market: str,
+    interval: str,
+    strategy: str,
+    params: dict,
+    order_ratio: float,
+    stop_loss: float,
+    take_profit: float,
+    df_live: pd.DataFrame,
+) -> bool:
+    from core.bot import BotConfig, BotState, _warmup_paper_state
+
+    config = BotConfig(
+        market=market,
+        interval=interval,
+        strategy=strategy,
+        params=params,
+        mode="paper",
+        budget=1_000_000,
+        order_ratio=order_ratio,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+    )
+    state = BotState()
+    state.paper_krw = config.budget
+    return _warmup_paper_state(config, state, df_live)
 
 
 # ─── 시장 상태 분석 ────────────────────────────────────────────
@@ -278,6 +411,19 @@ async def run_grid_search(
 
         test_score = score_result(test_summary)
         overfit_info = detect_overfit(train_summary, test_summary)
+        live_signal = get_signal(strategy, df_live, params)
+        warmup_position = _has_warmup_position(
+            market,
+            interval,
+            strategy,
+            params,
+            order_ratio,
+            stop_loss,
+            take_profit,
+            df_live,
+        )
+
+        # OOS 거래가 1건 미만이면 점수 패널티
         oos_score = test_score if test_summary.get("total_trades", 0) >= 1 else -100.0
 
         scored.append({
@@ -286,27 +432,53 @@ async def run_grid_search(
             "score": round(train_score, 4),
             "oos_score": round(oos_score, 4),
             "overfit_info": overfit_info,
+            "live_signal": {
+                "action": live_signal.action,
+                "reason": live_signal.reason,
+            },
+            "warmup_position": warmup_position,
             "metrics": {
                 "train": _extract_metrics(train_summary),
                 "oos": _extract_metrics(test_summary),
             },
         })
 
-    scored.sort(key=lambda x: x["oos_score"], reverse=True)
-    top = scored[:top_n]
+    top = _select_top_recommendations(scored, market_info, top_n)
+    if (
+        top
+        and top[0]["metrics"]["oos"].get("total_trades", 0) == 0
+        and not top[0].get("warmup_position")
+        and top[0].get("live_signal", {}).get("action") != "buy"
+    ):
+        fallback = _build_market_hint_fallback(scored, market_info)
+        if fallback:
+            top = [fallback] + [
+                rec for rec in top
+                if not (rec["strategy"] == fallback["strategy"] and rec["params"] == fallback["params"])
+            ]
+            top = top[:top_n]
 
     strategy_names = {"rsi": "RSI", "macd": "MACD", "bollinger": "볼린저 밴드", "ma_cross": "MA 크로스"}
     for rec in top:
         name = strategy_names.get(rec["strategy"], rec["strategy"])
         m_train = rec["metrics"]["train"]
         m_oos = rec["metrics"]["oos"]
+        if rec.get("fallback"):
+            rec["reason"] = f"{name} 전략 (시장 상태 fallback) | {market_info.get('reason', '현재 시장 상태 기준')}"
+            continue
         market_hint = " (시장 상태 일치)" if rec["strategy"] == market_info.get("best_strategy_hint") else ""
+        live_note = ""
+        if rec.get("live_signal", {}).get("action") == "buy":
+            live_note = " | 현재 buy 신호"
+        elif rec.get("warmup_position"):
+            live_note = " | 시작 시 포지션 복원 가능"
         overfit_warn = " ⚠️ 과최적화 의심" if rec["overfit_info"].get("overfit") else ""
         rec["reason"] = (
             f"{name} 전략{market_hint}{overfit_warn} | "
             f"학습 수익률 {m_train['total_return_pct']:+.1f}% / OOS {m_oos['total_return_pct']:+.1f}% | "
             f"샤프(OOS) {m_oos['sharpe_ratio']:.2f} | "
             f"승률(OOS) {m_oos['win_rate_pct']:.0f}% ({m_oos['total_trades']}건)"
+            f"{live_note}"
         )
 
     executor.shutdown(wait=False)

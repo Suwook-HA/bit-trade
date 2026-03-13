@@ -7,7 +7,13 @@ Recommender OOS/overfit 테스트
 import pytest
 import numpy as np
 
-from core.recommender import detect_overfit, score_result, _extract_metrics
+from core.recommender import (
+    detect_overfit,
+    score_result,
+    _extract_metrics,
+    _build_market_hint_fallback,
+    _select_top_recommendations,
+)
 
 
 # ─── detect_overfit ────────────────────────────────────────────────
@@ -160,3 +166,84 @@ class TestExtractMetrics:
         metrics = _extract_metrics({})
         for key in ["total_return_pct", "sharpe_ratio", "total_trades"]:
             assert metrics[key] == 0
+
+
+class TestSelectTopRecommendations:
+
+    def _make_rec(self, strategy, trades, total_return, oos_score, train_score=1.0):
+        return {
+            "strategy": strategy,
+            "params": {},
+            "score": train_score,
+            "oos_score": oos_score,
+            "live_signal": {"action": "hold", "reason": ""},
+            "warmup_position": False,
+            "metrics": {
+                "train": {"total_trades": 5, "total_return_pct": 1.0},
+                "oos": {
+                    "total_trades": trades,
+                    "total_return_pct": total_return,
+                    "win_rate_pct": 55.0,
+                },
+            },
+        }
+
+    def test_prefers_tradable_market_hint_for_scalping(self):
+        scored = [
+            self._make_rec("macd", trades=0, total_return=0.0, oos_score=-100.0),
+            self._make_rec("rsi", trades=2, total_return=0.2, oos_score=0.1),
+            self._make_rec("bollinger", trades=3, total_return=0.1, oos_score=0.05),
+        ]
+
+        top = _select_top_recommendations(scored, {"best_strategy_hint": "rsi"}, top_n=1)
+
+        assert top[0]["strategy"] == "rsi"
+
+    def test_prefers_live_buy_signal_when_oos_is_quiet(self):
+        buy_ready = self._make_rec("macd", trades=0, total_return=0.0, oos_score=-100.0)
+        buy_ready["live_signal"]["action"] = "buy"
+        sleepy = self._make_rec("rsi", trades=0, total_return=0.0, oos_score=0.1)
+
+        top = _select_top_recommendations([sleepy, buy_ready], {"best_strategy_hint": "rsi"}, top_n=1)
+
+        assert top[0]["strategy"] == "macd"
+        assert top[0]["live_signal"]["action"] == "buy"
+
+    def test_prefers_warmup_ready_strategy_when_oos_is_quiet(self):
+        warm_ready = self._make_rec("ma_cross", trades=0, total_return=0.0, oos_score=-100.0)
+        warm_ready["warmup_position"] = True
+        sleepy = self._make_rec("rsi", trades=0, total_return=0.0, oos_score=0.1)
+
+        top = _select_top_recommendations([sleepy, warm_ready], {"best_strategy_hint": "rsi"}, top_n=1)
+
+        assert top[0]["strategy"] == "ma_cross"
+        assert top[0]["warmup_position"] is True
+
+    def test_filters_zero_trade_oos_when_tradable_options_exist(self):
+        scored = [
+            self._make_rec("macd", trades=0, total_return=0.0, oos_score=99.0),
+            self._make_rec("ma_cross", trades=1, total_return=-0.1, oos_score=-0.2),
+        ]
+
+        top = _select_top_recommendations(scored, {"best_strategy_hint": "ma_cross"}, top_n=2)
+
+        assert top[0]["strategy"] == "ma_cross"
+        assert all(rec["metrics"]["oos"]["total_trades"] > 0 for rec in top)
+
+    def test_falls_back_to_market_hint_when_all_oos_trades_are_zero(self):
+        scored = [
+            self._make_rec("macd", trades=0, total_return=0.0, oos_score=99.0, train_score=0.2),
+            self._make_rec("rsi", trades=0, total_return=0.0, oos_score=0.1, train_score=0.1),
+        ]
+
+        top = _select_top_recommendations(scored, {"best_strategy_hint": "rsi"}, top_n=1)
+
+        assert top[0]["strategy"] == "rsi"
+
+    def test_builds_market_hint_scalping_fallback(self):
+        fallback = _build_market_hint_fallback([], {"best_strategy_hint": "rsi", "reason": "횡보"})
+
+        assert fallback is not None
+        assert fallback["strategy"] == "rsi"
+        assert fallback["params"] == {"period": 7, "oversold": 25, "overbought": 65}
+        assert fallback["fallback"] is True

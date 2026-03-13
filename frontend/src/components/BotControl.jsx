@@ -43,8 +43,8 @@ const MAX_ORDER_RATIO = 0.4
 const RECOMMENDATION_LOOKBACK_DAYS = 3
 const SCALPING_PRESET = {
   market: 'KRW-BTC',
-  strategy: 'macd',
-  params: SCALPING_PARAMS.macd,
+  strategy: 'rsi',
+  params: SCALPING_PARAMS.rsi,
   botInterval: '1m',
   mode: 'paper',
   orderRatio: 0.3,

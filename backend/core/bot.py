@@ -15,6 +15,8 @@ from db.database import get_db, get_persistent_db, upsert_position, write_audit_
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MARKETS = {"KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP"}
+WARMUP_CANDLE_COUNT = 180
+WARMUP_MIN_WINDOW = 35
 
 
 @dataclass
@@ -107,6 +109,81 @@ def _count_active_positions(mode: str) -> int:
         for market, state in _bot_states.items()
         if state.position == "long" and _bot_configs.get(market) and _bot_configs[market].mode == mode
     )
+
+
+def _warmup_paper_state(config: BotConfig, state: BotState, df) -> bool:
+    """
+    시작 직전 최근 캔들로 현재 열려 있어야 하는 포지션만 복원한다.
+    과거 실현손익은 반영하지 않고, 마지막 열린 포지션만 seed 한다.
+    """
+    signal_df = _get_signal_df(df)
+    if signal_df is None or len(signal_df) <= WARMUP_MIN_WINDOW:
+        return False
+
+    sim_krw = config.budget
+    sim_asset = 0.0
+    position = "none"
+    entry_price = 0.0
+    entry_volume = 0.0
+    peak_price = 0.0
+
+    for idx in range(WARMUP_MIN_WINDOW, len(signal_df)):
+        window_df = signal_df.iloc[:idx + 1]
+        signal = get_signal(config.strategy, window_df, config.params)
+        price = float(signal.price)
+        signal_action = signal.action
+
+        if position == "long" and price > peak_price:
+            peak_price = price
+
+        if position == "long" and entry_price > 0:
+            change = (price - entry_price) / entry_price
+            if change <= -config.stop_loss:
+                signal_action = "sell"
+            elif change >= config.take_profit:
+                signal_action = "sell"
+            elif config.trailing_stop and peak_price > 0:
+                drop = (price - peak_price) / peak_price
+                if drop <= -config.trailing_stop_pct:
+                    signal_action = "sell"
+
+        if signal_action == "buy" and position == "none":
+            invest_krw = min(sim_krw * config.order_ratio, config.budget * config.order_ratio)
+            if invest_krw < 5000:
+                continue
+
+            buy_price = price * (1 + config.slippage_rate)
+            fee = invest_krw * config.fee_rate
+            entry_volume = (invest_krw - fee) / buy_price
+            sim_krw -= invest_krw
+            sim_asset = entry_volume
+            entry_price = buy_price
+            peak_price = buy_price
+            position = "long"
+
+        elif signal_action == "sell" and position == "long":
+            # 과거 실현손익은 버리고, flat 상태만 복원한다.
+            sim_krw = config.budget
+            sim_asset = 0.0
+            entry_price = 0.0
+            entry_volume = 0.0
+            peak_price = 0.0
+            position = "none"
+
+    if position != "long":
+        return False
+
+    state.paper_krw = sim_krw
+    state.paper_asset = sim_asset
+    state.position = position
+    state.entry_price = entry_price
+    state.entry_volume = entry_volume
+    state.peak_price = peak_price
+    state.last_signal = "hold"
+    state.last_signal_reason = (
+        f"Warm-up seeded open {config.strategy} position from recent closed candles"
+    )
+    return True
 
 
 def get_bot_status(market: Optional[str] = None) -> dict:
@@ -595,13 +672,15 @@ async def start_bot(config_dict: dict) -> dict:
     state = BotState()
     if config.mode == "paper":
         state.paper_krw = config.budget
+        warmup_df = get_candles_df(config.market, config.interval, count=WARMUP_CANDLE_COUNT)
+        seeded = _warmup_paper_state(config, state, warmup_df)
+    else:
+        seeded = False
 
     # RiskEngine 세션 초기화 — 스캘핑 인터벌이면 타이트한 프리셋 사용
     from core.risk_engine import RiskEngine
     if config.interval in SCALPING_INTERVALS:
         risk_engine = RiskEngine(SCALPING_RISK_CONFIG)
-        # 기존 싱글턴을 모드별로 덮어쓰지 않고 독립 인스턴스로 _bot_configs에 보관
-        # (스캘핑/스윙 동시 운용 시 혼용 방지)
         import core.risk_engine as _re_module
         _re_module._risk_engine = risk_engine
 
@@ -609,7 +688,13 @@ async def start_bot(config_dict: dict) -> dict:
         from api.ws_handler import subscribe_for_bot
         await subscribe_for_bot(market)
 
-    get_risk_engine().initialize_session(config.mode, config.budget)
+    # 실제 포트폴리오 가치로 RiskEngine 세션 초기화
+    initial_portfolio_value = config.budget
+    if config.mode == "paper":
+        ticker = get_ticker(config.market)
+        current_price = ticker.get("price", state.entry_price) if ticker else state.entry_price
+        initial_portfolio_value = state.paper_krw + state.paper_asset * current_price
+    get_risk_engine().initialize_session(config.mode, initial_portfolio_value or config.budget)
 
     _bot_configs[market] = config
     _bot_states[market] = state
@@ -617,6 +702,17 @@ async def start_bot(config_dict: dict) -> dict:
 
     # 감사 로그
     db = await get_persistent_db()
+    if seeded:
+        await write_audit_log(
+            db, "warmup_position_seeded",
+            f"Seeded {config.strategy} position from recent candles",
+            market=market, mode=config.mode,
+            details={
+                "entry_price": round(state.entry_price, 0),
+                "entry_volume": state.entry_volume,
+                "paper_krw": round(state.paper_krw, 0),
+            }
+        )
     await write_audit_log(
         db, "bot_start",
         f"Bot started: {config.strategy} / {config.mode}",

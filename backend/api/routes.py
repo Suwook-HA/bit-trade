@@ -134,7 +134,7 @@ async def bot_start(req: BotStartRequest):
         rec = await run_grid_search(
             market=req.market,
             interval=req.interval,
-            days=7,
+            days=3,
             top_n=1,
             order_ratio=req.order_ratio,
             stop_loss=req.stop_loss,

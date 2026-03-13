@@ -1,6 +1,7 @@
 import pandas as pd
 
-from core.bot import _get_signal_df, _validate_order_ratio
+from core.bot import BotConfig, BotState, _get_signal_df, _validate_order_ratio, _warmup_paper_state
+from core.strategies import Signal
 
 
 def test_get_signal_df_uses_only_closed_candles(sample_df):
@@ -20,3 +21,61 @@ def test_validate_order_ratio_blocks_orders_above_risk_limit():
 
 def test_validate_order_ratio_allows_safe_order_size():
     assert _validate_order_ratio(0.3) is None
+
+
+def test_warmup_paper_state_seeds_open_position(sample_df, monkeypatch):
+    config = BotConfig(
+        strategy="macd",
+        params={"fast": 5, "slow": 13, "signal": 5},
+        budget=1_000_000,
+        order_ratio=0.3,
+    )
+    state = BotState()
+    state.paper_krw = config.budget
+    calls = {"count": 0}
+
+    def fake_get_signal(strategy, df, params):
+        calls["count"] += 1
+        action = "buy" if calls["count"] == 2 else "hold"
+        return Signal(action, action, float(df["close"].iloc[-1]), {})
+
+    monkeypatch.setattr("core.bot.get_signal", fake_get_signal)
+
+    seeded = _warmup_paper_state(config, state, sample_df)
+
+    assert seeded is True
+    assert state.position == "long"
+    assert state.paper_asset > 0
+    assert state.paper_krw < config.budget
+    assert "Warm-up seeded open" in state.last_signal_reason
+
+
+def test_warmup_paper_state_resets_flat_state_after_sell(sample_df, monkeypatch):
+    config = BotConfig(
+        strategy="macd",
+        params={"fast": 5, "slow": 13, "signal": 5},
+        budget=1_000_000,
+        order_ratio=0.3,
+    )
+    state = BotState()
+    state.paper_krw = config.budget
+    calls = {"count": 0}
+
+    def fake_get_signal(strategy, df, params):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            action = "buy"
+        elif calls["count"] == 4:
+            action = "sell"
+        else:
+            action = "hold"
+        return Signal(action, action, float(df["close"].iloc[-1]), {})
+
+    monkeypatch.setattr("core.bot.get_signal", fake_get_signal)
+
+    seeded = _warmup_paper_state(config, state, sample_df)
+
+    assert seeded is False
+    assert state.position == "none"
+    assert state.paper_asset == 0
+    assert state.paper_krw == config.budget
