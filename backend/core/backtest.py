@@ -157,21 +157,45 @@ def run_backtest_on_df(
     else:
         mdd = 0
 
+    # ── Annualization factor ─────────────────────────────────────
+    if len(df) > 1:
+        avg_seconds = (df.index[-1] - df.index[0]).total_seconds() / (len(df) - 1)
+        candles_per_year = 365 * 24 * 3600 / max(avg_seconds, 1)
+    else:
+        candles_per_year = 252 * 24 * 60  # fallback: 1분봉
+
+    # ── Sharpe Ratio ─────────────────────────────────────────────
     if len(equity_values) > 1:
         returns = np.diff(equity_values) / equity_values[:-1]
         if returns.std() > 0:
-            # 캔들 간격에서 연간 캔들 수를 역산하여 올바른 annualization factor 적용
-            # (252일 기준이 아니라 실제 타임프레임 기준)
-            if len(df) > 1:
-                avg_seconds = (df.index[-1] - df.index[0]).total_seconds() / (len(df) - 1)
-                candles_per_year = 365 * 24 * 3600 / max(avg_seconds, 1)
-            else:
-                candles_per_year = 252 * 24 * 60  # fallback: 1분봉 기준
             sharpe = float(returns.mean() / returns.std() * np.sqrt(candles_per_year))
         else:
-            sharpe = 0
+            sharpe = 0.0
     else:
-        sharpe = 0
+        returns = np.array([])
+        sharpe = 0.0
+
+    # ── Sortino Ratio ────────────────────────────────────────────
+    if len(returns) > 0:
+        downside = returns[returns < 0]
+        if len(downside) > 0 and downside.std() > 0:
+            sortino = float(returns.mean() / downside.std() * np.sqrt(candles_per_year))
+        else:
+            sortino = 0.0
+    else:
+        sortino = 0.0
+
+    # ── Profit Factor ────────────────────────────────────────────
+    pnl_values = [t.get("pnl", 0) for t in sell_trades]
+    gross_profit = sum(p for p in pnl_values if p > 0)
+    gross_loss = abs(sum(p for p in pnl_values if p < 0))
+    profit_factor = round(gross_profit / gross_loss, 3) if gross_loss > 0 else 999.0
+
+    # ── Expectancy (평균 거래 PnL) ───────────────────────────────
+    expectancy = sum(pnl_values) / len(pnl_values) if pnl_values else 0.0
+
+    # ── Turnover (거래 빈도) ─────────────────────────────────────
+    turnover = len(sell_trades) / len(df) if len(df) > 0 else 0.0
 
     return {
         "summary": {
@@ -182,9 +206,13 @@ def run_backtest_on_df(
             "win_rate_pct": round(win_rate, 2),
             "mdd_pct": round(mdd, 2),
             "sharpe_ratio": round(sharpe, 3),
+            "sortino_ratio": round(sortino, 3),
+            "profit_factor": profit_factor,
+            "expectancy_krw": round(expectancy, 0),
+            "turnover": round(turnover, 4),
             "data_points": len(df),
-        "fee_rate_pct": round(fee_rate * 100, 3),
-        "slippage_rate_pct": round(slippage_rate * 100, 3),
+            "fee_rate_pct": round(fee_rate * 100, 3),
+            "slippage_rate_pct": round(slippage_rate * 100, 3),
         },
         "trades": trades[-100:],
         "equity_curve": equity_curve[::max(1, len(equity_curve) // 500)],

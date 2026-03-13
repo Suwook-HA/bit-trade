@@ -1,6 +1,8 @@
 """
 전략 자동 추천 & 그리드 서치 엔진
+- In-sample / Out-of-sample 70/30 분리 백테스트 (과최적화 억제)
 - 단타 최적화 파라미터 포함 54개 전략×파라미터 조합 병렬 백테스트
+- 5개 지표 가중 조합 스코어 (수익률·샤프·소르티노·승률·MDD)
 - 실시간 지표 기반 시장 상태 분석
 - 5분 캐시
 """
@@ -44,8 +46,10 @@ for _short, _long in itertools.product([3, 5, 7], [10, 15, 20]):
 _cache: dict = {}
 _CACHE_TTL = 300  # 5분
 
-def _cache_key(market, interval, days):
-    return f"{market}:{interval}:{days}"
+
+def _cache_key(market, interval, days, split_ratio):
+    return f"{market}:{interval}:{days}:{split_ratio}"
+
 
 def _get_cached(key):
     entry = _cache.get(key)
@@ -53,19 +57,83 @@ def _get_cached(key):
         return entry["data"]
     return None
 
+
 def _set_cached(key, data):
     _cache[key] = {"ts": time.time(), "data": data}
 
 
-# ─── 스코어링 ──────────────────────────────────────────────────
+# ─── 스코어링 (5개 지표 가중 조합) ──────────────────────────────
 def score_result(summary: dict) -> float:
+    """수익률·샤프·소르티노·승률·MDD 가중 조합 점수 (거래 수 최소 요건 포함)"""
     trades = summary.get("total_trades", 0)
     if trades < 2:
         return -999.0
+
     ret = summary.get("total_return_pct", 0)
     sharpe = summary.get("sharpe_ratio", 0)
+    sortino = summary.get("sortino_ratio", 0)
     win_rate = summary.get("win_rate_pct", 0)
-    return ret * 0.4 + sharpe * 0.4 + (win_rate / 5) * 0.2
+    mdd = summary.get("mdd_pct", 0)  # 음수값, 클수록 나쁨
+
+    # MDD 페널티: MDD -10% → -1.0점
+    mdd_penalty = mdd * 0.1
+
+    return (
+        ret * 0.30
+        + sharpe * 0.25
+        + sortino * 0.15
+        + (win_rate / 5) * 0.15
+        + mdd_penalty * 0.15
+    )
+
+
+# ─── 과최적화 감지 ────────────────────────────────────────────
+def detect_overfit(
+    train_summary: dict,
+    test_summary: dict,
+    degradation_threshold: float = 0.5,
+) -> dict:
+    """OOS 성과가 in-sample 대비 50% 이상 저하되면 과최적화 경고를 반환한다."""
+    train_score = score_result(train_summary)
+    test_score = score_result(test_summary)
+
+    if train_score <= 0:
+        # 학습 구간 자체가 음의 점수 → 과최적화 판단 불가
+        return {
+            "overfit": False,
+            "train_score": round(train_score, 4),
+            "test_score": round(test_score, 4),
+            "degradation_pct": 0.0,
+            "reason": "학습 구간 점수 음수 — 과최적화 판단 불가",
+        }
+
+    degradation = (train_score - test_score) / abs(train_score)
+    overfit = degradation >= degradation_threshold
+
+    return {
+        "overfit": overfit,
+        "train_score": round(train_score, 4),
+        "test_score": round(test_score, 4),
+        "degradation_pct": round(degradation * 100, 1),
+        "reason": (
+            f"OOS 점수({test_score:.2f})가 학습 점수({train_score:.2f}) 대비 "
+            f"{degradation * 100:.1f}% 저하 — {'과최적화 의심' if overfit else '정상 범위'}"
+        ),
+    }
+
+
+def _extract_metrics(summary: dict) -> dict:
+    """summary dict에서 핵심 지표를 추출한다."""
+    return {
+        "total_return_pct": summary.get("total_return_pct", 0),
+        "sharpe_ratio": summary.get("sharpe_ratio", 0),
+        "sortino_ratio": summary.get("sortino_ratio", 0),
+        "win_rate_pct": summary.get("win_rate_pct", 0),
+        "profit_factor": summary.get("profit_factor", 0),
+        "expectancy_krw": summary.get("expectancy_krw", 0),
+        "total_trades": summary.get("total_trades", 0),
+        "mdd_pct": summary.get("mdd_pct", 0),
+    }
 
 
 # ─── 시장 상태 분석 ────────────────────────────────────────────
@@ -120,7 +188,10 @@ def analyze_market_condition(df: pd.DataFrame) -> dict:
             condition = "trending_up" if slope > 0 else "trending_down"
             hint = "ma_cross" if abs(slope) > 1.0 else "macd"
             direction = "상승" if slope > 0 else "하락"
-            reason = f"MA20 기울기 {slope:+.2f}%, MACD {'양' if macd_val > 0 else '음'} - {direction} 추세, {'MA크로스' if hint == 'ma_cross' else 'MACD'} 전략 권장"
+            reason = (
+                f"MA20 기울기 {slope:+.2f}%, MACD {'양' if macd_val > 0 else '음'} - "
+                f"{direction} 추세, {'MA크로스' if hint == 'ma_cross' else 'MACD'} 전략 권장"
+            )
         else:
             condition = "ranging"
             hint = "rsi"
@@ -156,8 +227,12 @@ async def run_grid_search(
     order_ratio: float = 0.5,
     stop_loss: float = 0.03,
     take_profit: float = 0.05,
+    split_ratio: float = 0.7,  # 앞 70% in-sample, 뒤 30% OOS
 ) -> dict:
-    key = _cache_key(market, interval, days)
+    if days < 3:
+        return {"error": "days는 최소 3 이상이어야 합니다 (OOS 구간 확보)"}
+
+    key = _cache_key(market, interval, days, split_ratio)
     cached = _get_cached(key)
     if cached:
         result = dict(cached)
@@ -172,21 +247,37 @@ async def run_grid_search(
     if df is None or df.empty or len(df) < 100:
         return {"error": "데이터 다운로드 실패 또는 데이터 부족"}
 
-    # 2. 시장 상태 분석 (최근 200봉)
+    # 2. In-sample / Out-of-sample 분리
+    split_idx = int(len(df) * split_ratio)
+    df_train = df.iloc[:split_idx]
+    df_test = df.iloc[split_idx:]
+    if len(df_train) < 100 or len(df_test) < 30:
+        return {
+            "error": f"데이터 부족: 학습 {len(df_train)}봉, 검증 {len(df_test)}봉 (최소: 학습 100봉, 검증 30봉)"
+        }
+
+    # 3. 시장 상태 분석 (최근 200봉)
     df_live = df.tail(200)
     market_info = analyze_market_condition(df_live)
 
-    # 3. 35개 조합 병렬 백테스트
+    # 4. 병렬 백테스트 (train + test 동시 실행)
     def run_one(strategy, params):
         try:
-            return run_backtest_on_df(
-                df, strategy, params,
+            train_res = run_backtest_on_df(
+                df_train, strategy, params,
                 order_ratio=order_ratio,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
             )
+            test_res = run_backtest_on_df(
+                df_test, strategy, params,
+                order_ratio=order_ratio,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+            )
+            return train_res, test_res
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e)}, {"error": str(e)}
 
     tasks = [
         loop.run_in_executor(executor, run_one, strategy, params)
@@ -194,44 +285,60 @@ async def run_grid_search(
     ]
     results_raw = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # 4. 스코어링
+    # 5. 스코어링
     scored = []
     for (strategy, params), result in zip(PARAM_GRID, results_raw):
-        if isinstance(result, Exception) or "error" in result:
+        if isinstance(result, Exception):
             continue
-        summary = result.get("summary", {})
-        s = score_result(summary)
-        if s <= -999:
+        train_res, test_res = result
+        if "error" in train_res or "error" in test_res:
             continue
+
+        train_summary = train_res.get("summary", {})
+        test_summary = test_res.get("summary", {})
+
+        train_score = score_result(train_summary)
+        if train_score <= -999:
+            continue  # 학습 구간 거래 부족 제외
+
+        test_score = score_result(test_summary)
+        overfit_info = detect_overfit(train_summary, test_summary)
+
+        # OOS 거래가 1건 미만이면 점수 패널티
+        oos_score = test_score if test_summary.get("total_trades", 0) >= 1 else -100.0
+
         scored.append({
             "strategy": strategy,
             "params": params,
-            "score": round(s, 4),
+            "score": round(train_score, 4),       # 학습 구간 점수
+            "oos_score": round(oos_score, 4),      # OOS 점수 (정렬 기준)
+            "overfit_info": overfit_info,
             "metrics": {
-                "total_return_pct": summary.get("total_return_pct", 0),
-                "sharpe_ratio": summary.get("sharpe_ratio", 0),
-                "win_rate_pct": summary.get("win_rate_pct", 0),
-                "total_trades": summary.get("total_trades", 0),
-                "mdd_pct": summary.get("mdd_pct", 0),
+                "train": _extract_metrics(train_summary),
+                "oos": _extract_metrics(test_summary),
             },
         })
 
-    scored.sort(key=lambda x: x["score"], reverse=True)
+    # OOS 점수 기준 정렬 (과최적화 억제)
+    scored.sort(key=lambda x: x["oos_score"], reverse=True)
     top = scored[:top_n]
 
-    # 5. 추천 이유 생성
+    # 6. 추천 이유 생성
     strategy_names = {
         "rsi": "RSI", "macd": "MACD",
         "bollinger": "볼린저 밴드", "ma_cross": "MA 크로스",
     }
-    for i, rec in enumerate(top):
+    for rec in top:
         name = strategy_names.get(rec["strategy"], rec["strategy"])
-        m = rec["metrics"]
+        m_train = rec["metrics"]["train"]
+        m_oos = rec["metrics"]["oos"]
         market_hint = " (시장 상태 일치)" if rec["strategy"] == market_info.get("best_strategy_hint") else ""
+        overfit_warn = " ⚠️ 과최적화 의심" if rec["overfit_info"].get("overfit") else ""
         rec["reason"] = (
-            f"{name} 전략{market_hint} - "
-            f"수익률 {m['total_return_pct']:+.1f}%, 샤프 {m['sharpe_ratio']:.2f}, "
-            f"승률 {m['win_rate_pct']:.0f}% ({m['total_trades']}건)"
+            f"{name} 전략{market_hint}{overfit_warn} | "
+            f"학습 수익률 {m_train['total_return_pct']:+.1f}% / OOS {m_oos['total_return_pct']:+.1f}% | "
+            f"샤프(OOS) {m_oos['sharpe_ratio']:.2f} | "
+            f"승률(OOS) {m_oos['win_rate_pct']:.0f}% ({m_oos['total_trades']}건)"
         )
 
     executor.shutdown(wait=False)
@@ -240,6 +347,11 @@ async def run_grid_search(
         "recommendations": top,
         "market_condition": market_info,
         "total_combinations_tested": len(scored),
+        "split_info": {
+            "train_candles": len(df_train),
+            "oos_candles": len(df_test),
+            "split_ratio": split_ratio,
+        },
         "cached": False,
     }
     _set_cached(key, data)

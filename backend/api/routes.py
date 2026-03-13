@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from typing import Optional
 
@@ -12,7 +12,7 @@ from db.database import get_db
 router = APIRouter(prefix="/api")
 
 
-# --- Candles ---
+# ─── Candles ────────────────────────────────────────────────────
 
 @router.get("/candles/{market}")
 async def candles(market: str, interval: str = "1m", count: int = 200):
@@ -27,14 +27,14 @@ async def indicators(market: str, interval: str = "1m", count: int = 200):
     return result
 
 
-# --- Ticker ---
+# ─── Ticker ─────────────────────────────────────────────────────
 
 @router.get("/ticker/{market}")
 async def ticker(market: str):
     return get_ticker(market)
 
 
-# --- Bot ---
+# ─── Bot ─────────────────────────────────────────────────────────
 
 class BotStartRequest(BaseModel):
     market: str = "KRW-BTC"
@@ -78,16 +78,20 @@ async def bot_start(req: BotStartRequest):
 
 
 @router.post("/bot/stop", dependencies=[Depends(verify_api_key)])
-async def bot_stop():
-    return await stop_bot()
+async def bot_stop(
+    market: Optional[str] = Query(None, description="마켓 코드 (예: KRW-BTC). 생략 시 전체 중지")
+):
+    return await stop_bot(market=market)
 
 
 @router.get("/bot/status")
-async def bot_status():
-    return get_bot_status()
+async def bot_status(
+    market: Optional[str] = Query(None, description="마켓 코드. 생략 시 전체 상태 반환")
+):
+    return get_bot_status(market=market)
 
 
-# --- Backtest ---
+# ─── Backtest ────────────────────────────────────────────────────
 
 class BacktestRequest(BaseModel):
     market: str = "KRW-BTC"
@@ -127,12 +131,13 @@ async def backtest(req: BacktestRequest):
     return result
 
 
-# --- Strategy Recommend ---
+# ─── Strategy Recommend ──────────────────────────────────────────
 
 class RecommendRequest(BaseModel):
     market: str = "KRW-BTC"
     interval: str = "1m"
     days: int = 7
+    split_ratio: float = 0.7
 
 
 @router.post("/strategy/recommend")
@@ -142,36 +147,67 @@ async def strategy_recommend(req: RecommendRequest):
         market=req.market,
         interval=req.interval,
         days=req.days,
+        split_ratio=req.split_ratio,
     )
 
 
-# --- Portfolio ---
+# ─── Portfolio ───────────────────────────────────────────────────
 
 @router.get("/portfolio")
-async def portfolio():
+async def portfolio(
+    market: Optional[str] = Query(None, description="마켓 코드. 생략 시 KRW-BTC"),
+    mode: Optional[str] = Query(None, description="paper | live"),
+):
+    target_market = market or "KRW-BTC"
+    target_mode = mode or "paper"
     db = await get_db()
     try:
+        # positions 테이블 우선 조회 (멀티마켓 지원)
         cursor = await db.execute(
-            "SELECT krw_balance, btc_balance, updated_at FROM paper_portfolio ORDER BY id DESC LIMIT 1"
+            "SELECT krw_balance, asset_balance, entry_price, position, updated_at "
+            "FROM positions WHERE mode=? AND market=? LIMIT 1",
+            (target_mode, target_market),
         )
-        row = await cursor.fetchone()
-        paper = {"krw": row[0], "btc": row[1], "updated_at": row[2]} if row else {}
+        pos_row = await cursor.fetchone()
 
-        cursor2 = await db.execute(
-            "SELECT side, price, volume, pnl, created_at, strategy, mode FROM trades ORDER BY created_at DESC LIMIT 50"
+        if pos_row:
+            paper = {
+                "krw": pos_row[0],
+                "asset": pos_row[1],
+                "btc": pos_row[1],   # 하위 호환 alias
+                "entry_price": pos_row[2],
+                "position": pos_row[3],
+                "updated_at": pos_row[4],
+                "market": target_market,
+            }
+        else:
+            # paper_portfolio 폴백 (BTC 전용 레거시)
+            cursor2 = await db.execute(
+                "SELECT krw_balance, btc_balance, updated_at FROM paper_portfolio ORDER BY id DESC LIMIT 1"
+            )
+            row = await cursor2.fetchone()
+            paper = (
+                {"krw": row[0], "btc": row[1], "asset": row[1], "updated_at": row[2]}
+                if row else {}
+            )
+
+        # 최근 거래 내역
+        cursor3 = await db.execute(
+            "SELECT side, price, volume, pnl, created_at, strategy, mode FROM trades "
+            "ORDER BY created_at DESC LIMIT 50"
         )
-        rows = await cursor2.fetchall()
+        rows = await cursor3.fetchall()
         trades = [
             {"side": r[0], "price": r[1], "volume": r[2], "pnl": r[3],
              "created_at": r[4], "strategy": r[5], "mode": r[6]}
             for r in rows
         ]
 
-        # P&L 집계 (전체 매도 거래 기준)
-        cursor3 = await db.execute(
+        # P&L 집계
+        cursor4 = await db.execute(
             "SELECT pnl FROM trades WHERE side='sell' AND pnl IS NOT NULL"
         )
-        pnl_rows = await cursor3.fetchall()
+        pnl_rows = await cursor4.fetchall()
         pnl_values = [r[0] for r in pnl_rows if r[0] is not None]
         total_pnl = sum(pnl_values)
         win_count = sum(1 for p in pnl_values if p > 0)
@@ -189,5 +225,169 @@ async def portfolio():
         }
 
         return {"paper_portfolio": paper, "recent_trades": trades, "pnl_summary": pnl_summary}
+    finally:
+        await db.close()
+
+
+@router.get("/portfolio/all")
+async def portfolio_all(
+    mode: Optional[str] = Query(None, description="paper | live"),
+):
+    """모든 마켓 포지션 목록 반환"""
+    target_mode = mode or "paper"
+    db = await get_db()
+    try:
+        cursor = await db.execute(
+            "SELECT market, krw_balance, asset_balance, entry_price, position, peak_price, updated_at "
+            "FROM positions WHERE mode=? ORDER BY market",
+            (target_mode,),
+        )
+        rows = await cursor.fetchall()
+        positions = [
+            {
+                "market": r[0],
+                "krw": r[1],
+                "asset": r[2],
+                "btc": r[2],   # 하위 호환
+                "entry_price": r[3],
+                "position": r[4],
+                "peak_price": r[5],
+                "updated_at": r[6],
+            }
+            for r in rows
+        ]
+        total_krw = sum(p["krw"] for p in positions)
+        return {
+            "mode": target_mode,
+            "positions": positions,
+            "total_positions": len(positions),
+            "total_krw_balance": round(total_krw),
+        }
+    finally:
+        await db.close()
+
+
+# ─── Risk Engine ─────────────────────────────────────────────────
+
+@router.get("/risk/status")
+async def risk_status(
+    mode: Optional[str] = Query(None, description="paper | live. 생략 시 전체"),
+):
+    from core.risk_engine import get_risk_engine
+    engine = get_risk_engine()
+    if mode:
+        return engine.get_status(mode)
+    return engine.get_all_status()
+
+
+@router.post("/risk/reset-circuit-breaker", dependencies=[Depends(verify_api_key)])
+async def risk_reset_circuit_breaker(mode: str = Query("paper")):
+    from core.risk_engine import get_risk_engine
+    get_risk_engine().reset_circuit_breaker(mode)
+    return {"ok": True, "message": f"Circuit breaker reset for mode={mode}"}
+
+
+# ─── Audit Log ───────────────────────────────────────────────────
+
+@router.get("/audit-log")
+async def audit_log(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    event_type: Optional[str] = Query(None, description="bot_start | bot_stop | risk_blocked | circuit_breaker 등"),
+    market: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+):
+    """구조화 감사 로그 조회"""
+    import json
+    db = await get_db()
+    try:
+        conditions = []
+        filter_params: list = []
+        if event_type:
+            conditions.append("event_type = ?")
+            filter_params.append(event_type)
+        if market:
+            conditions.append("market = ?")
+            filter_params.append(market)
+        if mode:
+            conditions.append("mode = ?")
+            filter_params.append(mode)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        cursor = await db.execute(
+            f"SELECT id, event_type, market, mode, message, details, created_at "
+            f"FROM audit_log {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            filter_params + [limit, offset],
+        )
+        rows = await cursor.fetchall()
+        logs = [
+            {
+                "id": r[0],
+                "event_type": r[1],
+                "market": r[2],
+                "mode": r[3],
+                "message": r[4],
+                "details": json.loads(r[5]) if r[5] else None,
+                "created_at": r[6],
+            }
+            for r in rows
+        ]
+
+        cursor2 = await db.execute(
+            f"SELECT COUNT(*) FROM audit_log {where}", filter_params
+        )
+        total = (await cursor2.fetchone())[0]
+
+        return {"logs": logs, "total": total, "limit": limit, "offset": offset}
+    finally:
+        await db.close()
+
+
+# ─── Orders ──────────────────────────────────────────────────────
+
+@router.get("/orders")
+async def orders(
+    market: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="pending | filled | cancelled | failed"),
+    mode: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+):
+    """주문 목록 조회"""
+    db = await get_db()
+    try:
+        conditions = []
+        filter_params: list = []
+        if market:
+            conditions.append("market = ?")
+            filter_params.append(market)
+        if status:
+            conditions.append("status = ?")
+            filter_params.append(status)
+        if mode:
+            conditions.append("mode = ?")
+            filter_params.append(mode)
+
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        cursor = await db.execute(
+            f"SELECT id, market, mode, side, status, price, volume, "
+            f"filled_price, filled_volume, strategy, exchange_order_id, "
+            f"error_message, created_at, updated_at "
+            f"FROM orders {where} ORDER BY created_at DESC LIMIT ?",
+            filter_params + [limit],
+        )
+        rows = await cursor.fetchall()
+        result = [
+            {
+                "id": r[0], "market": r[1], "mode": r[2], "side": r[3],
+                "status": r[4], "price": r[5], "volume": r[6],
+                "filled_price": r[7], "filled_volume": r[8],
+                "strategy": r[9], "exchange_order_id": r[10],
+                "error_message": r[11], "created_at": r[12], "updated_at": r[13],
+            }
+            for r in rows
+        ]
+        return {"orders": result, "total": len(result)}
     finally:
         await db.close()
