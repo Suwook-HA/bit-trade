@@ -21,23 +21,23 @@ WARMUP_MIN_WINDOW = 35
 
 @dataclass
 class BotConfig:
-    market: str = "KRW-BTC"
-    interval: str = "1m"
-    strategy: str = "rsi"
-    params: dict = field(default_factory=lambda: {"period": 14, "oversold": 30, "overbought": 70})
-    mode: str = "paper"          # 'paper' | 'live'
-    budget: float = 1000000      # KRW
-    order_ratio: float = 0.3     # 예산의 몇 % 투자
-    stop_loss: float = 0.03      # 손절 3%
-    take_profit: float = 0.05    # 익절 5%
-    auto_rebalance: bool = False
-    rebalance_interval_candles: int = 30
+    market: str = SCALPING_DEFAULTS["market"]
+    interval: str = SCALPING_DEFAULTS["interval"]
+    strategy: str = SCALPING_DEFAULTS["strategy"]
+    params: dict = field(default_factory=lambda: get_strategy_params(SCALPING_DEFAULTS["strategy"]))
+    mode: str = SCALPING_DEFAULTS["mode"]          # 'paper' | 'live'
+    budget: float = SCALPING_DEFAULTS["budget"]      # KRW
+    order_ratio: float = SCALPING_DEFAULTS["order_ratio"]     # 예산의 몇 % 투자
+    stop_loss: float = SCALPING_DEFAULTS["stop_loss"]      # 손절 3%
+    take_profit: float = SCALPING_DEFAULTS["take_profit"]    # 익절 5%
+    auto_rebalance: bool = SCALPING_DEFAULTS["auto_rebalance"]
+    rebalance_interval_candles: int = SCALPING_DEFAULTS["rebalance_interval_candles"]
     rebalance_threshold: float = 0.20
-    execution_interval_seconds: int = 0  # 0 = 캔들 타임프레임과 동일
-    fee_rate: float = 0.0005             # 업비트 수수료 0.05%
-    slippage_rate: float = 0.0002        # 슬리피지 0.02%
-    trailing_stop: bool = False
-    trailing_stop_pct: float = 0.02
+    execution_interval_seconds: int = SCALPING_DEFAULTS["execution_interval_seconds"]  # 0 = 캔들 타임프레임과 동일
+    fee_rate: float = SCALPING_DEFAULTS["fee_rate"]             # 업비트 수수료 0.05%
+    slippage_rate: float = SCALPING_DEFAULTS["slippage_rate"]        # 슬리피지 0.02%
+    trailing_stop: bool = SCALPING_DEFAULTS["trailing_stop"]
+    trailing_stop_pct: float = SCALPING_DEFAULTS["trailing_stop_pct"]
 
 
 @dataclass
@@ -46,7 +46,7 @@ class BotState:
     position: str = "none"       # 'none' | 'long'
     entry_price: float = 0.0
     entry_volume: float = 0.0
-    paper_krw: float = 10000000
+    paper_krw: float = SCALPING_DEFAULTS["budget"]
     paper_asset: float = 0.0     # BTC/ETH/SOL/XRP 등 asset 잔고 (마켓 무관)
     total_trades: int = 0
     total_pnl: float = 0.0
@@ -652,7 +652,7 @@ async def _bot_loop(config: BotConfig, state: BotState):
 
 
 async def start_bot(config_dict: dict) -> dict:
-    market = config_dict.get("market", "KRW-BTC")
+    market = config_dict.get("market", SCALPING_DEFAULTS["market"])
 
     if market not in SUPPORTED_MARKETS:
         return {"error": f"Unsupported market: {market}. Supported: {sorted(SUPPORTED_MARKETS)}"}
@@ -660,8 +660,29 @@ async def start_bot(config_dict: dict) -> dict:
     if market in _bot_states and _bot_states[market].running:
         return {"error": f"Bot for {market} is already running"}
 
+    merged_config = {
+        "market": SCALPING_DEFAULTS["market"],
+        "interval": SCALPING_DEFAULTS["interval"],
+        "strategy": SCALPING_DEFAULTS["strategy"],
+        "params": get_strategy_params(SCALPING_DEFAULTS["strategy"]),
+        "mode": SCALPING_DEFAULTS["mode"],
+        "budget": SCALPING_DEFAULTS["budget"],
+        "order_ratio": SCALPING_DEFAULTS["order_ratio"],
+        "stop_loss": SCALPING_DEFAULTS["stop_loss"],
+        "take_profit": SCALPING_DEFAULTS["take_profit"],
+        "auto_rebalance": SCALPING_DEFAULTS["auto_rebalance"],
+        "rebalance_interval_candles": SCALPING_DEFAULTS["rebalance_interval_candles"],
+        "execution_interval_seconds": SCALPING_DEFAULTS["execution_interval_seconds"],
+        "fee_rate": SCALPING_DEFAULTS["fee_rate"],
+        "slippage_rate": SCALPING_DEFAULTS["slippage_rate"],
+        "trailing_stop": SCALPING_DEFAULTS["trailing_stop"],
+        "trailing_stop_pct": SCALPING_DEFAULTS["trailing_stop_pct"],
+        **config_dict,
+    }
+    if not merged_config.get("params"):
+        merged_config["params"] = get_strategy_params(merged_config["strategy"])
     config = BotConfig(**{
-        k: v for k, v in config_dict.items()
+        k: v for k, v in merged_config.items()
         if k in BotConfig.__dataclass_fields__
     })
 

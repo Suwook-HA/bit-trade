@@ -7,6 +7,7 @@ from core.strategies import compute_indicators_for_chart
 from core.bot import start_bot, stop_bot, get_bot_status, SUPPORTED_MARKETS
 from core.backtest import run_backtest
 from core.auth import verify_api_key
+from core.defaults import SCALPING_DEFAULTS, get_strategy_params
 from db.database import get_db
 
 router = APIRouter(prefix="/api")
@@ -134,11 +135,13 @@ async def bot_start(req: BotStartRequest):
         rec = await run_grid_search(
             market=req.market,
             interval=req.interval,
-            days=3,
+            days=SCALPING_DEFAULTS["recommendation_lookback_days"],
             top_n=1,
             order_ratio=req.order_ratio,
             stop_loss=req.stop_loss,
             take_profit=req.take_profit,
+            trailing_stop=req.trailing_stop,
+            trailing_stop_pct=req.trailing_stop_pct,
         )
         if rec and not rec.get("error") and rec.get("recommendations"):
             best = rec["recommendations"][0]
@@ -216,10 +219,15 @@ async def backtest(req: BacktestRequest):
 # ─── Strategy Recommend ──────────────────────────────────────────
 
 class RecommendRequest(BaseModel):
-    market: str = "KRW-BTC"
-    interval: str = "1m"
-    days: int = 7
+    market: str = SCALPING_DEFAULTS["market"]
+    interval: str = SCALPING_DEFAULTS["interval"]
+    days: int = SCALPING_DEFAULTS["recommendation_lookback_days"]
     split_ratio: float = 0.7
+    order_ratio: float = SCALPING_DEFAULTS["order_ratio"]
+    stop_loss: float = SCALPING_DEFAULTS["stop_loss"]
+    take_profit: float = SCALPING_DEFAULTS["take_profit"]
+    trailing_stop: bool = SCALPING_DEFAULTS["trailing_stop"]
+    trailing_stop_pct: float = SCALPING_DEFAULTS["trailing_stop_pct"]
 
 
 @router.post("/strategy/recommend")
@@ -229,6 +237,11 @@ async def strategy_recommend(req: RecommendRequest):
         market=req.market,
         interval=req.interval,
         days=req.days,
+        order_ratio=req.order_ratio,
+        stop_loss=req.stop_loss,
+        take_profit=req.take_profit,
+        trailing_stop=req.trailing_stop,
+        trailing_stop_pct=req.trailing_stop_pct,
         split_ratio=req.split_ratio,
     )
 

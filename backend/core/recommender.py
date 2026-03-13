@@ -14,15 +14,14 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 from core.backtest import download_history, run_backtest_on_df
+from core.defaults import SCALPING_DEFAULTS, get_strategy_params
 from core.strategies import get_signal
 
 # ─── 파라미터 그리드 (단타 최적화 포함) ──────────────────────────
 PARAM_GRID: list[tuple[str, dict]] = []
 SCALPING_HINT_DEFAULTS = {
-    "rsi": {"period": 7, "oversold": 25, "overbought": 65},
-    "macd": {"fast": 5, "slow": 13, "signal": 5},
-    "bollinger": {"period": 10, "std_dev": 1.5},
-    "ma_cross": {"short_period": 3, "long_period": 10},
+    strategy: get_strategy_params(strategy)
+    for strategy in SCALPING_DEFAULTS["strategy_params"]
 }
 
 for _period, _oversold, _overbought in itertools.product([7, 9, 10, 14], [25, 30], [65, 70]):
@@ -57,8 +56,22 @@ _cache: dict = {}
 _CACHE_TTL = 300
 
 
-def _cache_key(market, interval, days, split_ratio):
-    return f"{market}:{interval}:{days}:{split_ratio}"
+def _cache_key(
+    market,
+    interval,
+    days,
+    split_ratio,
+    top_n,
+    order_ratio,
+    stop_loss,
+    take_profit,
+    trailing_stop,
+    trailing_stop_pct,
+):
+    return (
+        f"{market}:{interval}:{days}:{split_ratio}:{top_n}:"
+        f"{order_ratio}:{stop_loss}:{take_profit}:{trailing_stop}:{trailing_stop_pct}"
+    )
 
 
 def _get_cached(key):
@@ -204,7 +217,7 @@ def _select_top_recommendations(scored: list[dict], market_info: dict, top_n: in
 def _build_market_hint_fallback(scored: list[dict], market_info: dict) -> dict | None:
     """OOS 거래가 모두 0건일 때 현재 시장 상태에 맞는 스캘핑 프리셋을 반환한다."""
     strategy = market_info.get("best_strategy_hint")
-    params = SCALPING_HINT_DEFAULTS.get(strategy)
+    params = get_strategy_params(strategy) if strategy in SCALPING_HINT_DEFAULTS else None
     if not strategy or not params:
         return None
 
@@ -245,6 +258,8 @@ def _has_warmup_position(
     order_ratio: float,
     stop_loss: float,
     take_profit: float,
+    trailing_stop: bool,
+    trailing_stop_pct: float,
     df_live: pd.DataFrame,
 ) -> bool:
     from core.bot import BotConfig, BotState, _warmup_paper_state
@@ -255,10 +270,12 @@ def _has_warmup_position(
         strategy=strategy,
         params=params,
         mode="paper",
-        budget=1_000_000,
+        budget=SCALPING_DEFAULTS["budget"],
         order_ratio=order_ratio,
         stop_loss=stop_loss,
         take_profit=take_profit,
+        trailing_stop=trailing_stop,
+        trailing_stop_pct=trailing_stop_pct,
     )
     state = BotState()
     state.paper_krw = config.budget
@@ -337,19 +354,32 @@ def _ema(values: np.ndarray, period: int) -> float:
 
 # ─── 그리드 서치 메인 함수 ────────────────────────────────────
 async def run_grid_search(
-    market: str = "KRW-BTC",
-    interval: str = "1m",
-    days: int = 7,
+    market: str = SCALPING_DEFAULTS["market"],
+    interval: str = SCALPING_DEFAULTS["interval"],
+    days: int = SCALPING_DEFAULTS["recommendation_lookback_days"],
     top_n: int = 3,
-    order_ratio: float = 0.5,
-    stop_loss: float = 0.03,
-    take_profit: float = 0.05,
+    order_ratio: float = SCALPING_DEFAULTS["order_ratio"],
+    stop_loss: float = SCALPING_DEFAULTS["stop_loss"],
+    take_profit: float = SCALPING_DEFAULTS["take_profit"],
+    trailing_stop: bool = SCALPING_DEFAULTS["trailing_stop"],
+    trailing_stop_pct: float = SCALPING_DEFAULTS["trailing_stop_pct"],
     split_ratio: float = 0.7,  # 앞 70% in-sample, 뒤 30% OOS
 ) -> dict:
     if days < 3:
         return {"error": "days는 최소 3 이상이어야 합니다 (OOS 구간 확보)"}
 
-    key = _cache_key(market, interval, days, split_ratio)
+    key = _cache_key(
+        market,
+        interval,
+        days,
+        split_ratio,
+        top_n,
+        order_ratio,
+        stop_loss,
+        take_profit,
+        trailing_stop,
+        trailing_stop_pct,
+    )
     cached = _get_cached(key)
     if cached:
         result = dict(cached)
@@ -379,11 +409,19 @@ async def run_grid_search(
         try:
             train_res = run_backtest_on_df(
                 df_train, strategy, params,
-                order_ratio=order_ratio, stop_loss=stop_loss, take_profit=take_profit,
+                order_ratio=order_ratio,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                trailing_stop=trailing_stop,
+                trailing_stop_pct=trailing_stop_pct,
             )
             test_res = run_backtest_on_df(
                 df_test, strategy, params,
-                order_ratio=order_ratio, stop_loss=stop_loss, take_profit=take_profit,
+                order_ratio=order_ratio,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                trailing_stop=trailing_stop,
+                trailing_stop_pct=trailing_stop_pct,
             )
             return train_res, test_res
         except Exception as e:
@@ -420,6 +458,8 @@ async def run_grid_search(
             order_ratio,
             stop_loss,
             take_profit,
+            trailing_stop,
+            trailing_stop_pct,
             df_live,
         )
 

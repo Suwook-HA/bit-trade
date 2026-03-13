@@ -1,0 +1,40 @@
+{
+  "market": "KRW-BTC",
+  "interval": "1m",
+  "mode": "paper",
+  "budget": 1000000,
+  "strategy": "rsi",
+  "order_ratio": 0.3,
+  "max_order_ratio": 0.4,
+  "stop_loss": 0.012,
+  "take_profit": 0.02,
+  "auto_rebalance": true,
+  "auto_strategy": true,
+  "rebalance_interval_candles": 30,
+  "execution_interval_seconds": 10,
+  "fee_rate": 0.0005,
+  "slippage_rate": 0.0002,
+  "trailing_stop": true,
+  "trailing_stop_pct": 0.008,
+  "recommendation_lookback_days": 3,
+  "strategy_params": {
+    "rsi": {
+      "period": 7,
+      "oversold": 25,
+      "overbought": 65
+    },
+    "macd": {
+      "fast": 5,
+      "slow": 13,
+      "signal": 5
+    },
+    "bollinger": {
+      "period": 10,
+      "std_dev": 1.5
+    },
+    "ma_cross": {
+      "short_period": 3,
+      "long_period": 10
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { startBot, stopBot, getBotStatus, getRecommendation } from '../services/api'
+import scalpingDefaults from '../config/scalpingDefaults.json'
 
 const MARKETS = [
   { value: 'KRW-BTC', label: '비트코인 (BTC)' },
@@ -39,23 +40,24 @@ const CONDITION_META = {
 }
 
 const label = { fontSize: '11px', color: '#71717a', marginBottom: '4px', display: 'block', fontWeight: 500 }
-const MAX_ORDER_RATIO = 0.4
-const RECOMMENDATION_LOOKBACK_DAYS = 3
+const MAX_ORDER_RATIO = scalpingDefaults.max_order_ratio
+const RECOMMENDATION_LOOKBACK_DAYS = scalpingDefaults.recommendation_lookback_days
+const cloneStrategyParams = strategy => ({ ...SCALPING_PARAMS[strategy] })
 const SCALPING_PRESET = {
-  market: 'KRW-BTC',
-  strategy: 'rsi',
-  params: SCALPING_PARAMS.rsi,
-  botInterval: '1m',
-  mode: 'paper',
-  orderRatio: 0.3,
-  stopLoss: 1.2,
-  takeProfit: 2.0,
-  autoRebalance: true,
-  autoStrategy: true,
-  execInterval: 10,
-  budget: 1000000,
-  trailingStop: true,
-  trailingStopPct: 0.8,
+  market: scalpingDefaults.market,
+  strategy: scalpingDefaults.strategy,
+  params: cloneStrategyParams(scalpingDefaults.strategy),
+  botInterval: scalpingDefaults.interval,
+  mode: scalpingDefaults.mode,
+  orderRatio: scalpingDefaults.order_ratio,
+  stopLoss: scalpingDefaults.stop_loss * 100,
+  takeProfit: scalpingDefaults.take_profit * 100,
+  autoRebalance: scalpingDefaults.auto_rebalance,
+  autoStrategy: scalpingDefaults.auto_strategy,
+  execInterval: scalpingDefaults.execution_interval_seconds,
+  budget: scalpingDefaults.budget,
+  trailingStop: scalpingDefaults.trailing_stop,
+  trailingStopPct: scalpingDefaults.trailing_stop_pct * 100,
 }
 const row2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }
 const divider = { borderTop: '1px solid #27272a', margin: '12px 0' }
@@ -210,7 +212,7 @@ function RunningStatus({ status }) {
 export default function BotControl() {
   const [market, setMarket] = useState(SCALPING_PRESET.market)
   const [strategy, setStrategy] = useState(SCALPING_PRESET.strategy)
-  const [params, setParams] = useState(SCALPING_PRESET.params)
+  const [params, setParams] = useState(() => cloneStrategyParams(SCALPING_PRESET.strategy))
   const [botInterval, setBotInterval] = useState(SCALPING_PRESET.botInterval)
   const [mode, setMode] = useState(SCALPING_PRESET.mode)
   const [orderRatio, setOrderRatio] = useState(SCALPING_PRESET.orderRatio)
@@ -255,12 +257,12 @@ export default function BotControl() {
 
   const applyRecommendation = (recStrategy, recParams) => {
     setStrategy(recStrategy)
-    setParams(recParams)
+    setParams({ ...recParams })
   }
 
   const selectStrategy = nextStrategy => {
     setStrategy(nextStrategy)
-    setParams(SCALPING_PARAMS[nextStrategy])
+    setParams(cloneStrategyParams(nextStrategy))
   }
 
   const loadRecommendation = async ({ autoApply = true } = {}) => {
@@ -274,6 +276,11 @@ export default function BotControl() {
         market,
         interval: botInterval,
         days: RECOMMENDATION_LOOKBACK_DAYS,
+        order_ratio: orderRatio,
+        stop_loss: stopLoss / 100,
+        take_profit: takeProfit / 100,
+        trailing_stop: trailingStop,
+        trailing_stop_pct: trailingStopPct / 100,
       })
 
       if (recommendationRequestRef.current !== requestId) return null
@@ -300,7 +307,7 @@ export default function BotControl() {
   useEffect(() => {
     if (!autoStrategy) return
     loadRecommendation()
-  }, [market, botInterval, autoStrategy])
+  }, [market, botInterval, autoStrategy, orderRatio, stopLoss, takeProfit, trailingStop, trailingStopPct])
 
   const handleStart = async () => {
     setLoading(true)
@@ -311,7 +318,7 @@ export default function BotControl() {
         budget, order_ratio: orderRatio,
         stop_loss: stopLoss / 100, take_profit: takeProfit / 100,
         auto_rebalance: autoRebalance,
-        rebalance_interval_candles: 30,
+        rebalance_interval_candles: scalpingDefaults.rebalance_interval_candles,
         execution_interval_seconds: execInterval,
         trailing_stop: trailingStop,
         trailing_stop_pct: trailingStopPct / 100,
