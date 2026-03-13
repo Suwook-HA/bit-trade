@@ -395,7 +395,11 @@ async def _bot_loop_scalping(config: BotConfig, state: BotState):
     interval_s = INTERVAL_SECONDS_MAP.get(config.interval, 30)
     aggregator = get_tick_aggregator(interval_s)
 
-    seed_df = get_candles_df(config.market, "1m", count=100)
+    # 1m REST 캔들로 warm-up (동기 HTTP 호출 → run_in_executor로 이벤트 루프 블로킹 방지)
+    loop = asyncio.get_event_loop()
+    seed_df = await loop.run_in_executor(
+        None, lambda: get_candles_df(config.market, "1m", count=100)
+    )
     if not seed_df.empty:
         aggregator.seed_from_df(config.market, seed_df)
         logger.info("Scalping warm-up [%s]: seeded %d candles", config.market, len(seed_df))
@@ -537,6 +541,11 @@ async def start_bot(config_dict: dict) -> dict:
         # (스캘핑/스윙 동시 운용 시 혼용 방지)
         import core.risk_engine as _re_module
         _re_module._risk_engine = risk_engine
+
+        # 스캘핑 봇 전용 Upbit 스트림 예약 (브라우저 연결 없어도 tick 수신)
+        from api.ws_handler import subscribe_for_bot
+        await subscribe_for_bot(market)
+
     get_risk_engine().initialize_session(config.mode, config.budget)
 
     _bot_configs[market] = config
@@ -578,8 +587,13 @@ async def stop_bot(market: Optional[str] = None) -> dict:
 
         stopped.append(m)
 
-        # 감사 로그
+        # 스캘핑 봇이었으면 Upbit 스트림 예약 해제
         config = _bot_configs.get(m)
+        if config and config.interval in SCALPING_INTERVALS:
+            from api.ws_handler import unsubscribe_for_bot
+            await unsubscribe_for_bot(m)
+
+        # 감사 로그
         db = await get_persistent_db()
         await write_audit_log(
             db, "bot_stop", f"Bot stopped for {m}",

@@ -23,6 +23,7 @@ _candle_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
 
 _upbit_ws: UpbitWebSocketClient | None = None
 _subscribed_markets: Set[str] = set()
+_bot_markets: Set[str] = set()   # 스캘핑 봇이 점유 중인 마켓 (브라우저 없어도 스트림 유지)
 _ws_lock = asyncio.Lock()
 
 
@@ -91,7 +92,8 @@ async def _release_market_if_unused(market: str):
 
     has_ticker = bool(_ticker_clients.get(market))
     has_candle = bool(_candle_clients.get(market))
-    if has_ticker or has_candle:
+    has_bot = market in _bot_markets  # 스캘핑 봇이 점유 중이면 유지
+    if has_ticker or has_candle or has_bot:
         return
 
     async with _ws_lock:
@@ -108,6 +110,21 @@ async def _release_market_if_unused(market: str):
         _upbit_ws = UpbitWebSocketClient(markets_list, on_ticker=on_ticker_update)
         asyncio.create_task(_upbit_ws.start())
         logger.info("Upbit stream restarted after removing %s: %s", market, markets_list)
+
+
+# ─── 봇 전용 구독 관리 ────────────────────────────────────────────
+async def subscribe_for_bot(market: str):
+    """스캘핑 봇 시작 시 호출 — 브라우저 없이도 해당 마켓 Upbit 스트림을 유지한다."""
+    _bot_markets.add(market)
+    await _ensure_market_subscribed(market)
+    logger.info("Bot subscribed to market stream: %s", market)
+
+
+async def unsubscribe_for_bot(market: str):
+    """스캘핑 봇 종료 시 호출 — 브라우저 구독자도 없으면 스트림을 해제한다."""
+    _bot_markets.discard(market)
+    await _release_market_if_unused(market)
+    logger.info("Bot unsubscribed from market stream: %s", market)
 
 
 # ─── 공개 초기화 (main.py lifespan에서 호출) ──────────────────────
