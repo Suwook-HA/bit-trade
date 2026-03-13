@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 
@@ -6,6 +6,7 @@ from core.upbit_client import get_candles, get_candles_df, get_ticker
 from core.strategies import compute_indicators_for_chart
 from core.bot import start_bot, stop_bot, get_bot_status
 from core.backtest import run_backtest
+from core.auth import verify_api_key
 from db.database import get_db
 
 router = APIRouter(prefix="/api")
@@ -45,14 +46,38 @@ class BotStartRequest(BaseModel):
     order_ratio: float = 0.5
     stop_loss: float = 0.03
     take_profit: float = 0.05
+    auto_rebalance: bool = False
+    rebalance_interval_candles: int = 30
+    execution_interval_seconds: int = 0
+    fee_rate: float = 0.0005
+    slippage_rate: float = 0.0002
+    trailing_stop: bool = False
+    trailing_stop_pct: float = 0.02
+    auto_strategy: bool = False
 
 
-@router.post("/bot/start")
+@router.post("/bot/start", dependencies=[Depends(verify_api_key)])
 async def bot_start(req: BotStartRequest):
-    return await start_bot(req.model_dump())
+    config = req.model_dump()
+    if req.auto_strategy:
+        from core.recommender import run_grid_search
+        rec = await run_grid_search(
+            market=req.market,
+            interval=req.interval,
+            days=7,
+            top_n=1,
+            order_ratio=req.order_ratio,
+            stop_loss=req.stop_loss,
+            take_profit=req.take_profit,
+        )
+        if rec and not rec.get("error") and rec.get("recommendations"):
+            best = rec["recommendations"][0]
+            config["strategy"] = best["strategy"]
+            config["params"] = best["params"]
+    return await start_bot(config)
 
 
-@router.post("/bot/stop")
+@router.post("/bot/stop", dependencies=[Depends(verify_api_key)])
 async def bot_stop():
     return await stop_bot()
 
@@ -74,6 +99,10 @@ class BacktestRequest(BaseModel):
     order_ratio: float = 0.5
     stop_loss: float = 0.03
     take_profit: float = 0.05
+    fee_rate: float = 0.0005
+    slippage_rate: float = 0.0002
+    trailing_stop: bool = False
+    trailing_stop_pct: float = 0.02
 
 
 @router.post("/backtest")
@@ -90,8 +119,30 @@ async def backtest(req: BacktestRequest):
         order_ratio=req.order_ratio,
         stop_loss=req.stop_loss,
         take_profit=req.take_profit,
+        fee_rate=req.fee_rate,
+        slippage_rate=req.slippage_rate,
+        trailing_stop=req.trailing_stop,
+        trailing_stop_pct=req.trailing_stop_pct,
     ))
     return result
+
+
+# --- Strategy Recommend ---
+
+class RecommendRequest(BaseModel):
+    market: str = "KRW-BTC"
+    interval: str = "1m"
+    days: int = 7
+
+
+@router.post("/strategy/recommend")
+async def strategy_recommend(req: RecommendRequest):
+    from core.recommender import run_grid_search
+    return await run_grid_search(
+        market=req.market,
+        interval=req.interval,
+        days=req.days,
+    )
 
 
 # --- Portfolio ---
@@ -115,6 +166,28 @@ async def portfolio():
              "created_at": r[4], "strategy": r[5], "mode": r[6]}
             for r in rows
         ]
-        return {"paper_portfolio": paper, "recent_trades": trades}
+
+        # P&L 집계 (전체 매도 거래 기준)
+        cursor3 = await db.execute(
+            "SELECT pnl FROM trades WHERE side='sell' AND pnl IS NOT NULL"
+        )
+        pnl_rows = await cursor3.fetchall()
+        pnl_values = [r[0] for r in pnl_rows if r[0] is not None]
+        total_pnl = sum(pnl_values)
+        win_count = sum(1 for p in pnl_values if p > 0)
+        loss_count = sum(1 for p in pnl_values if p < 0)
+        best_trade = max(pnl_values) if pnl_values else 0
+        worst_trade = min(pnl_values) if pnl_values else 0
+        pnl_summary = {
+            "total_pnl": round(total_pnl),
+            "trade_count": len(pnl_values),
+            "win_count": win_count,
+            "loss_count": loss_count,
+            "win_rate_pct": round(win_count / len(pnl_values) * 100, 1) if pnl_values else 0,
+            "best_trade": round(best_trade),
+            "worst_trade": round(worst_trade),
+        }
+
+        return {"paper_portfolio": paper, "recent_trades": trades, "pnl_summary": pnl_summary}
     finally:
         await db.close()

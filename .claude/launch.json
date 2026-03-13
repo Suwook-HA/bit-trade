@@ -3,14 +3,14 @@
   "configurations": [
     {
       "name": "Backend (FastAPI)",
-      "runtimeExecutable": "C:\\Users\\etri\\anaconda3\\python.exe",
-      "runtimeArgs": ["start_backend.py"],
+      "runtimeExecutable": "C:\\Users\\admin\\anaconda3\\python.exe",
+      "runtimeArgs": ["C:\\Users\\admin\\OneDrive\\바탕 화면\\Coding\\BITtrade\\start_backend.py"],
       "port": 8000
     },
     {
       "name": "Frontend (Vite)",
-      "runtimeExecutable": "C:\\Users\\etri\\anaconda3\\node.exe",
-      "runtimeArgs": ["frontend\\node_modules\\vite\\bin\\vite.js", "frontend", "--port", "5173", "--config", "frontend\\vite.config.js"],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
       "port": 5173
     }
   ]

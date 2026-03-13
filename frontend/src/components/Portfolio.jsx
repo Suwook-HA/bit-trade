@@ -14,6 +14,7 @@ export default function Portfolio() {
   const fmt = n => n?.toLocaleString('ko-KR')
   const trades = data?.recent_trades || []
   const portfolio = data?.paper_portfolio
+  const pnl = data?.pnl_summary
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -36,6 +37,57 @@ export default function Portfolio() {
             <div style={{ fontSize: '10px', color: '#52525b', marginBottom: '4px' }}>BTC 보유량</div>
             <div style={{ fontSize: '15px', fontWeight: 700, color: '#fbbf24', fontVariantNumeric: 'tabular-nums' }}>
               {portfolio.btc?.toFixed(6)} BTC
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* P&L Summary */}
+      {pnl && pnl.trade_count > 0 && (
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid #27272a' }}>
+          <div style={{ fontSize: '10px', color: '#52525b', fontWeight: 600, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            누적 손익 분석
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', marginBottom: '8px' }}>
+            {/* 총 손익 */}
+            <div style={{
+              background: pnl.total_pnl >= 0 ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)',
+              border: `1px solid ${pnl.total_pnl >= 0 ? 'rgba(52,211,153,0.25)' : 'rgba(248,113,113,0.25)'}`,
+              borderRadius: '8px', padding: '8px', textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '9px', color: '#52525b', marginBottom: '3px', textTransform: 'uppercase' }}>총 손익</div>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: pnl.total_pnl >= 0 ? '#34d399' : '#f87171', fontVariantNumeric: 'tabular-nums' }}>
+                {pnl.total_pnl >= 0 ? '+' : ''}₩{fmt(Math.abs(pnl.total_pnl))}
+              </div>
+            </div>
+            {/* 승/패 */}
+            <div style={{ background: '#18181b', border: '1px solid #27272a', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+              <div style={{ fontSize: '9px', color: '#52525b', marginBottom: '3px', textTransform: 'uppercase' }}>승 / 패</div>
+              <div style={{ fontSize: '13px', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ color: '#34d399' }}>{pnl.win_count}</span>
+                <span style={{ color: '#52525b', fontSize: '11px' }}> / </span>
+                <span style={{ color: '#f87171' }}>{pnl.loss_count}</span>
+              </div>
+              <div style={{ fontSize: '9px', color: '#71717a', marginTop: '1px' }}>승률 {pnl.win_rate_pct}%</div>
+            </div>
+            {/* 거래 수 */}
+            <div style={{ background: '#18181b', border: '1px solid #27272a', borderRadius: '8px', padding: '8px', textAlign: 'center' }}>
+              <div style={{ fontSize: '9px', color: '#52525b', marginBottom: '3px', textTransform: 'uppercase' }}>총 거래</div>
+              <div style={{ fontSize: '13px', fontWeight: 800, color: '#a1a1aa' }}>{pnl.trade_count}회</div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+            <div style={{ background: '#18181b', border: '1px solid #27272a', borderRadius: '6px', padding: '6px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '10px', color: '#52525b' }}>최대 수익</span>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#34d399', fontVariantNumeric: 'tabular-nums' }}>
+                +₩{fmt(pnl.best_trade)}
+              </span>
+            </div>
+            <div style={{ background: '#18181b', border: '1px solid #27272a', borderRadius: '6px', padding: '6px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '10px', color: '#52525b' }}>최대 손실</span>
+              <span style={{ fontSize: '11px', fontWeight: 700, color: '#f87171', fontVariantNumeric: 'tabular-nums' }}>
+                ₩{fmt(pnl.worst_trade)}
+              </span>
             </div>
           </div>
         </div>
