@@ -386,7 +386,7 @@ async def run_grid_search(
         result["cached"] = True
         return result
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     executor = ThreadPoolExecutor(max_workers=8)
 
     df = await loop.run_in_executor(executor, lambda: download_history(market, interval, days))
@@ -498,7 +498,7 @@ async def run_grid_search(
             ]
             top = top[:top_n]
 
-    strategy_names = {"rsi": "RSI", "macd": "MACD", "bollinger": "볼린저 밴드", "ma_cross": "MA 크로스"}
+    strategy_names = {"rsi": "RSI", "macd": "MACD", "bollinger": "볼린저 밴드", "ma_cross": "MA 크로스", "vwap": "VWAP"}
     for rec in top:
         name = strategy_names.get(rec["strategy"], rec["strategy"])
         m_train = rec["metrics"]["train"]
@@ -521,7 +521,7 @@ async def run_grid_search(
             f"{live_note}"
         )
 
-    executor.shutdown(wait=False)
+    executor.shutdown(wait=True)
 
     data = {
         "recommendations": top,

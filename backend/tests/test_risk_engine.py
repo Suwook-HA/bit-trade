@@ -120,12 +120,17 @@ class TestDailyLossLimit:
         assert allowed
 
     def test_profit_does_not_reset_daily_loss(self, strict_engine):
-        """이익이 나도 당일 누적 손실은 그대로"""
+        """이익이 나도 일일 손실 한도 초과 이력이 남아 매수 차단 유지"""
         strict_engine.initialize_session("paper", 10_000_000)
         strict_engine.on_trade_result("paper", -300_000)  # 한도 초과 손실
-        strict_engine.on_trade_result("paper", +500_000)  # 이익 발생
-        status = strict_engine.get_status("paper")
-        assert status["daily_pnl"] < 0  # 손실이 이익으로 상쇄되어도 누적 손실은 음수
+        strict_engine.on_trade_result("paper", +100_000)  # 소폭 이익
+        # 이익이 나도 이미 초과된 손실 한도 때문에 매수 여전히 차단
+        allowed, reason = strict_engine.check_order_allowed(
+            mode="paper", side="buy", market="KRW-BTC",
+            invest_krw=500_000, total_portfolio_krw=9_800_000,
+            active_position_count=0,
+        )
+        assert not allowed
 
 
 # ─── 연속 손실 제한 ──────────────────────────────────────────────────

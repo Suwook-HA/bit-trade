@@ -48,7 +48,8 @@ async def on_ticker_update(data: dict):
     # candle 구독 클라이언트에게 해당 마켓의 최신 캔들 payload 전송
     if _candle_clients.get(market):
         try:
-            df = get_candles_df(market, "1m", count=2)
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(None, lambda: get_candles_df(market, "1m", count=2))
             if not df.empty:
                 latest = df.iloc[-1]
                 candle_payload = {

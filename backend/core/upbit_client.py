@@ -100,9 +100,11 @@ def get_ticker(market: str) -> dict:
     ticker = pyupbit.get_current_price(market)
     if ticker is None:
         return {}
-    orderbook = pyupbit.get_orderbook(market)
+    orderbook_raw = pyupbit.get_orderbook(market)
     result = {"market": market, "price": ticker}
-    if orderbook and "orderbook_units" in orderbook:
+    # pyupbit.get_orderbook() returns a list, not dict
+    orderbook = orderbook_raw[0] if isinstance(orderbook_raw, list) and orderbook_raw else orderbook_raw
+    if orderbook and isinstance(orderbook, dict) and "orderbook_units" in orderbook:
         result["ask_price"] = orderbook["orderbook_units"][0]["ask_price"]
         result["bid_price"] = orderbook["orderbook_units"][0]["bid_price"]
     return result
@@ -115,8 +117,10 @@ def get_orderbook_imbalance(market: str, depth: int = 5) -> dict:
       +1 = 완전 매수 우위 (bid-heavy), -1 = 완전 매도 우위 (ask-heavy)
     spread_pct: 최우선 매도-매수 스프레드 (%)
     """
-    orderbook = pyupbit.get_orderbook(market)
-    if not orderbook or "orderbook_units" not in orderbook:
+    orderbook_raw = pyupbit.get_orderbook(market)
+    # pyupbit.get_orderbook() returns a list, not dict
+    orderbook = orderbook_raw[0] if isinstance(orderbook_raw, list) and orderbook_raw else orderbook_raw
+    if not orderbook or not isinstance(orderbook, dict) or "orderbook_units" not in orderbook:
         return {"imbalance": 0.0, "bid_vol": 0.0, "ask_vol": 0.0, "spread_pct": 0.0}
 
     units = orderbook["orderbook_units"][:depth]

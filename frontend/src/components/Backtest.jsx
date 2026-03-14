@@ -164,17 +164,17 @@ export default function Backtest() {
         <>
           {/* Metrics */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px' }}>
-            <MetricCard lbl="총 수익률" value={`${ret >= 0 ? '+' : ''}${ret}%`}
+            <MetricCard label="총 수익률" value={`${ret >= 0 ? '+' : ''}${ret}%`}
               color={ret >= 0 ? '#34d399' : '#f87171'}
               accent={ret >= 0 ? '#34d399' : '#f87171'} />
-            <MetricCard lbl="최종 자산" value={`₩${fmt(summary.final_value)}`}
+            <MetricCard label="최종 자산" value={`₩${fmt(summary.final_value)}`}
               sub={`초기 ₩${fmt(summary.initial_budget)}`}
               color={ret >= 0 ? '#34d399' : '#f87171'} />
-            <MetricCard lbl="총 거래" value={`${summary.total_trades}회`} />
-            <MetricCard lbl="승률" value={`${summary.win_rate_pct}%`}
+            <MetricCard label="총 거래" value={`${summary.total_trades}회`} />
+            <MetricCard label="승률" value={`${summary.win_rate_pct}%`}
               color={summary.win_rate_pct >= 50 ? '#34d399' : '#f87171'} />
-            <MetricCard lbl="MDD" value={`${summary.mdd_pct}%`} color="#f87171" accent="#f87171" />
-            <MetricCard lbl="Sharpe" value={summary.sharpe_ratio}
+            <MetricCard label="MDD" value={`${summary.mdd_pct}%`} color="#f87171" accent="#f87171" />
+            <MetricCard label="Sharpe" value={summary.sharpe_ratio}
               color={summary.sharpe_ratio >= 1 ? '#34d399' : summary.sharpe_ratio >= 0 ? '#fbbf24' : '#f87171'}
               sub={`수수료 ${summary.fee_rate_pct ?? 0.05}% · 슬리피지 ${summary.slippage_rate_pct ?? 0.02}%`} />
           </div>

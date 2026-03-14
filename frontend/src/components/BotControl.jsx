@@ -82,7 +82,7 @@ function RecommendationPanel({ data, onApply }) {
 
       {/* 추천 카드 */}
       {data.recommendations.map((rec, i) => {
-        const m = rec.metrics?.oos || {}
+        const m = rec.metrics?.oos || rec.metrics || {}
         return (
           <div key={i} style={{
             background: '#09090b', border: '1px solid #27272a',

@@ -57,6 +57,7 @@ class BotState:
     last_rebalanced: str = ""
     candle_counter: int = 0
     peak_price: float = 0.0
+    last_price: float = 0.0     # 최근 가격 캐시 (get_bot_status 논블로킹용)
     consecutive_losses: int = 0  # RiskEngine 연동용
 
 
@@ -64,6 +65,7 @@ class BotState:
 _bot_configs: Dict[str, BotConfig] = {}   # key: market
 _bot_states:  Dict[str, BotState]  = {}
 _bot_tasks:   Dict[str, asyncio.Task] = {}
+_bot_risk_engines: Dict[str, RiskEngine] = {}  # 봇별 독립 RiskEngine
 
 
 def _validate_order_ratio(order_ratio: float) -> Optional[str]:
@@ -201,8 +203,7 @@ def get_bot_status(market: Optional[str] = None) -> dict:
         config = _bot_configs.get(m)
         pnl_pct = 0.0
         if state.position == "long" and state.entry_price > 0:
-            ticker = get_ticker(m)
-            current_price = ticker.get("price", state.entry_price)
+            current_price = state.last_price if state.last_price > 0 else state.entry_price
             pnl_pct = (current_price - state.entry_price) / state.entry_price * 100
         return {
             "running": state.running,
@@ -223,7 +224,7 @@ def get_bot_status(market: Optional[str] = None) -> dict:
             "last_rebalanced": state.last_rebalanced,
             "rebalance_count": state.rebalance_count,
             "config": asdict(config) if config else None,
-            "risk": get_risk_engine().get_status(config.mode if config else "paper"),
+            "risk": _bot_risk_engines.get(m, get_risk_engine()).get_status(config.mode if config else "paper"),
         }
 
     if market:
@@ -369,7 +370,7 @@ async def _rebalance_check(config: BotConfig, state: BotState):
         from core.backtest import download_history, run_backtest_on_df
         from concurrent.futures import ThreadPoolExecutor
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         with ThreadPoolExecutor(max_workers=6) as executor:
             df = await loop.run_in_executor(
@@ -527,7 +528,7 @@ async def _bot_loop_scalping(config: BotConfig, state: BotState):
     aggregator = get_tick_aggregator(interval_s)
 
     # 1m REST 캔들로 warm-up (동기 HTTP 호출 → run_in_executor로 이벤트 루프 블로킹 방지)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     seed_df = await loop.run_in_executor(
         None, lambda: get_candles_df(config.market, "1m", count=100)
     )
@@ -535,7 +536,7 @@ async def _bot_loop_scalping(config: BotConfig, state: BotState):
         aggregator.seed_from_df(config.market, seed_df)
         logger.info("Scalping warm-up [%s]: seeded %d candles", config.market, len(seed_df))
 
-    risk = get_risk_engine()
+    risk = _bot_risk_engines.get(config.market, get_risk_engine())
 
     while state.running:
         try:
@@ -549,6 +550,7 @@ async def _bot_loop_scalping(config: BotConfig, state: BotState):
                 continue
 
             price = float(candle["close"])
+            state.last_price = price
             if state.position == "long" and price > state.peak_price:
                 state.peak_price = price
 
@@ -605,11 +607,14 @@ async def _bot_loop(config: BotConfig, state: BotState):
         config.market, config.interval, config.strategy, config.mode,
     )
 
-    risk = get_risk_engine()
+    risk = _bot_risk_engines.get(config.market, get_risk_engine())
 
     while state.running:
         try:
-            df = get_candles_df(config.market, config.interval, count=100)
+            loop = asyncio.get_running_loop()
+            df = await loop.run_in_executor(
+                None, lambda: get_candles_df(config.market, config.interval, count=100)
+            )
             signal_df = _get_signal_df(df)
             if signal_df is None or signal_df.empty:
                 await asyncio.sleep(interval_seconds)
@@ -620,9 +625,8 @@ async def _bot_loop(config: BotConfig, state: BotState):
             state.last_signal_reason = signal.reason
             state.last_check = datetime.now().strftime("%H:%M:%S")
 
-            ticker = get_ticker(config.market)
-            ticker_price = ticker.get("price") if ticker else None
-            price = float(ticker_price if ticker_price is not None else signal.price)
+            price = signal.price
+            state.last_price = price
 
             if state.position == "long" and price > state.peak_price:
                 state.peak_price = price
@@ -699,23 +703,16 @@ async def start_bot(config_dict: dict) -> dict:
         seeded = False
 
     # RiskEngine 세션 초기화 — 스캘핑 인터벌이면 타이트한 프리셋 사용
-    from core.risk_engine import RiskEngine
     if config.interval in SCALPING_INTERVALS:
-        risk_engine = RiskEngine(SCALPING_RISK_CONFIG)
-        import core.risk_engine as _re_module
-        _re_module._risk_engine = risk_engine
+        _bot_risk_engines[market] = RiskEngine(SCALPING_RISK_CONFIG)
 
         # 스캘핑 봇 전용 Upbit 스트림 예약 (브라우저 연결 없어도 tick 수신)
         from api.ws_handler import subscribe_for_bot
         await subscribe_for_bot(market)
+    else:
+        _bot_risk_engines[market] = get_risk_engine()
 
-    # 실제 포트폴리오 가치로 RiskEngine 세션 초기화
-    initial_portfolio_value = config.budget
-    if config.mode == "paper":
-        ticker = get_ticker(config.market)
-        current_price = ticker.get("price", state.entry_price) if ticker else state.entry_price
-        initial_portfolio_value = state.paper_krw + state.paper_asset * current_price
-    get_risk_engine().initialize_session(config.mode, initial_portfolio_value or config.budget)
+    _bot_risk_engines[market].initialize_session(config.mode, config.budget)
 
     _bot_configs[market] = config
     _bot_states[market] = state
