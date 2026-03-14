@@ -33,3 +33,6 @@ export const getPortfolio = () =>
 
 export const getRecommendation = (params) =>
   api.post('/strategy/recommend', params).then(r => r.data)
+
+export const resetPaperPortfolio = () =>
+  api.post('/portfolio/reset').then(r => r.data)

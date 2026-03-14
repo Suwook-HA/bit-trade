@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getPortfolio } from '../services/api'
+import { getPortfolio, resetPaperPortfolio } from '../services/api'
 
 export default function Portfolio() {
   const [data, setData] = useState(null)
@@ -11,10 +11,34 @@ export default function Portfolio() {
     return () => clearInterval(t)
   }, [])
 
+  const [resetting, setResetting] = useState(false)
+
   const fmt = n => n?.toLocaleString('ko-KR')
+  const fmtTime = ts => {
+    if (!ts) return ''
+    const d = new Date(ts.endsWith('Z') || ts.includes('+') ? ts : ts + 'Z')
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mi = String(d.getMinutes()).padStart(2, '0')
+    return `${mm}/${dd} ${hh}:${mi}`
+  }
   const trades = data?.recent_trades || []
   const portfolio = data?.paper_portfolio
   const pnl = data?.pnl_summary
+
+  const handleReset = async () => {
+    if (!confirm('모의투자 내역을 모두 초기화하시겠습니까?\n잔고가 1,000,000 KRW로 리셋됩니다.')) return
+    setResetting(true)
+    try {
+      await resetPaperPortfolio()
+      setData(await getPortfolio())
+    } catch (e) {
+      alert('리셋 실패: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setResetting(false)
+    }
+  }
 
   return (
     <div className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -95,8 +119,19 @@ export default function Portfolio() {
 
       {/* Trade history */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '10px 14px 6px', fontSize: '11px', color: '#52525b', fontWeight: 600 }}>
-          최근 거래 내역
+        <div style={{ padding: '10px 14px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: '11px', color: '#52525b', fontWeight: 600 }}>최근 거래 내역</span>
+          <button
+            onClick={handleReset}
+            disabled={resetting || trades.length === 0}
+            style={{
+              fontSize: '10px', color: '#f87171', background: 'rgba(248,113,113,0.1)',
+              border: '1px solid rgba(248,113,113,0.25)', borderRadius: '4px',
+              padding: '2px 8px', cursor: 'pointer', opacity: (resetting || trades.length === 0) ? 0.4 : 1,
+            }}
+          >
+            {resetting ? '초기화 중...' : '초기화'}
+          </button>
         </div>
 
         {trades.length === 0 ? (
@@ -135,6 +170,11 @@ export default function Portfolio() {
                   {t.side === 'sell' && t.pnl !== undefined && (
                     <div style={{ fontSize: '11px', fontWeight: 700, color: t.pnl >= 0 ? '#34d399' : '#f87171' }}>
                       {t.pnl >= 0 ? '+' : ''}₩{fmt(Math.round(t.pnl))}
+                    </div>
+                  )}
+                  {t.created_at && (
+                    <div style={{ fontSize: '9px', color: '#3f3f46', marginTop: '1px', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtTime(t.created_at)}
                     </div>
                   )}
                 </div>

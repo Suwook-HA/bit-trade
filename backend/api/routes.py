@@ -8,7 +8,7 @@ from core.bot import start_bot, stop_bot, get_bot_status, SUPPORTED_MARKETS
 from core.backtest import run_backtest
 from core.auth import verify_api_key
 from core.defaults import SCALPING_DEFAULTS, get_strategy_params
-from db.database import get_db
+from db.database import get_db, write_audit_log
 
 router = APIRouter(prefix="/api")
 
@@ -377,6 +377,31 @@ async def portfolio_all(mode: Optional[str] = Query(None)):
             "total_positions": len(positions),
             "total_krw_balance": round(sum(p["krw"] for p in positions)),
         }
+    finally:
+        await db.close()
+
+
+@router.post("/portfolio/reset")
+async def portfolio_reset(
+    market: Optional[str] = Query(None, description="마켓 코드. 생략 시 전체 paper 초기화"),
+):
+    """모의투자 거래 내역·포지션을 초기화하고 잔고를 1,000,000 KRW로 리셋."""
+    db = await get_db()
+    try:
+        if market:
+            await db.execute("DELETE FROM trades WHERE mode='paper' AND market=?", (market,))
+            await db.execute("DELETE FROM orders WHERE mode='paper' AND market=?", (market,))
+            await db.execute("DELETE FROM positions WHERE mode='paper' AND market=?", (market,))
+        else:
+            await db.execute("DELETE FROM trades WHERE mode='paper'")
+            await db.execute("DELETE FROM orders WHERE mode='paper'")
+            await db.execute("DELETE FROM positions WHERE mode='paper'")
+            await db.execute(
+                "UPDATE paper_portfolio SET krw_balance=1000000, btc_balance=0, updated_at=CURRENT_TIMESTAMP"
+            )
+        await db.commit()
+        await write_audit_log(db, "paper_reset", "모의투자 내역 초기화", market=market, mode="paper")
+        return {"status": "ok", "message": "모의투자 내역이 초기화되었습니다."}
     finally:
         await db.close()
 
