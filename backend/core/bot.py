@@ -18,6 +18,37 @@ SUPPORTED_MARKETS = {"KRW-BTC", "KRW-ETH", "KRW-SOL", "KRW-XRP"}
 WARMUP_CANDLE_COUNT = 180
 WARMUP_MIN_WINDOW = 35
 
+# ─── 기본값 ──────────────────────────────────────────────────────
+SCALPING_DEFAULTS = {
+    "market": "KRW-BTC",
+    "interval": "1m",
+    "strategy": "rsi",
+    "mode": "paper",
+    "budget": 1000000,
+    "order_ratio": 0.5,
+    "stop_loss": 0.03,
+    "take_profit": 0.05,
+    "auto_rebalance": False,
+    "rebalance_interval_candles": 30,
+    "execution_interval_seconds": 0,
+    "fee_rate": 0.0005,
+    "slippage_rate": 0.0002,
+    "trailing_stop": False,
+    "trailing_stop_pct": 0.02,
+}
+
+_DEFAULT_PARAMS = {
+    "rsi": {"period": 14, "oversold": 30, "overbought": 70},
+    "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "bollinger": {"period": 20, "std_dev": 2.0},
+    "ma_cross": {"short_period": 5, "long_period": 20},
+    "vwap": {"deviation": 0.003, "period": 20},
+}
+
+
+def get_strategy_params(strategy: str) -> dict:
+    return dict(_DEFAULT_PARAMS.get(strategy, _DEFAULT_PARAMS["rsi"]))
+
 
 @dataclass
 class BotConfig:
