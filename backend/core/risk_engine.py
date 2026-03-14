@@ -37,6 +37,10 @@ class RiskEngine:
         self._config = config or RiskConfig()
         self._states: Dict[str, RiskState] = {}
 
+    @property
+    def config(self) -> RiskConfig:
+        return self._config
+
     # ─── 세션 초기화 ────────────────────────────────────────────────
     def initialize_session(self, mode: str, total_portfolio_value: float) -> None:
         """봇 시작 시 호출. 모드별 상태를 초기화한다."""
