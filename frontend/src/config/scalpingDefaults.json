@@ -35,6 +35,10 @@
     "ma_cross": {
       "short_period": 3,
       "long_period": 10
+    },
+    "vwap": {
+      "deviation": 0.003,
+      "period": 20
     }
   }
 }
